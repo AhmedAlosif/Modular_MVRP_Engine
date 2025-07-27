@@ -23,12 +23,6 @@ export default function Home() {
             description="Mapbox-powered vector tile rendering (API key required)."
             Icon={MapIcon}
           />
-          <ProviderCard
-            name="OpenMapTiles"
-            href="/map/openmaptile"
-            description="Self-hosted vector tiles with custom styles."
-            Icon={ServerIcon}
-          />
         </div>
       </div>
     </main>
