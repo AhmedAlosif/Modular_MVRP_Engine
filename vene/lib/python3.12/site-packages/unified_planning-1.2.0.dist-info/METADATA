@@ -1,0 +1,70 @@
+Metadata-Version: 2.1
+Name: unified-planning
+Version: 1.2.0
+Summary: Unified Planning Framework
+Home-page: https://www.aiplan4eu-project.eu
+Author: AIPlan4EU Project
+Author-email: aiplan4eu@fbk.eu
+License: APACHE
+Keywords: planning logic STRIPS RDDL
+Classifier: Development Status :: 3 - Alpha
+Classifier: Intended Audience :: Science/Research
+Classifier: Intended Audience :: Developers
+Classifier: Topic :: Scientific/Engineering :: Artificial Intelligence
+Classifier: License :: OSI Approved :: Apache Software License
+Classifier: Programming Language :: Python :: 3.8
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Requires-Python: >=3.8
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: pyparsing
+Requires-Dist: networkx
+Requires-Dist: ConfigSpace
+Provides-Extra: aries
+Requires-Dist: up-aries>=0.4.0; extra == "aries"
+Provides-Extra: dev
+Requires-Dist: tarski[arithmetic]; extra == "dev"
+Requires-Dist: pytest; extra == "dev"
+Requires-Dist: pytest-cov; extra == "dev"
+Requires-Dist: mypy; extra == "dev"
+Provides-Extra: engines
+Requires-Dist: tarski[arithmetic]; extra == "engines"
+Requires-Dist: up-pyperplan~=1.1.0; extra == "engines"
+Requires-Dist: up-tamer~=1.1.4; extra == "engines"
+Requires-Dist: up-enhsp~=0.0.27; extra == "engines"
+Requires-Dist: up-fast-downward~=0.5.0; extra == "engines"
+Requires-Dist: up-lpg~=0.1.2; extra == "engines"
+Requires-Dist: up-fmap~=0.0.13; extra == "engines"
+Requires-Dist: up-aries>=0.4.0; extra == "engines"
+Requires-Dist: up-symk>=1.3.0; extra == "engines"
+Provides-Extra: enhsp
+Requires-Dist: up-enhsp~=0.0.27; extra == "enhsp"
+Provides-Extra: fast-downward
+Requires-Dist: up-fast-downward~=0.5.0; extra == "fast-downward"
+Provides-Extra: fmap
+Requires-Dist: up-fmap~=0.0.13; extra == "fmap"
+Provides-Extra: grpc
+Requires-Dist: grpcio; extra == "grpc"
+Requires-Dist: grpcio-tools; extra == "grpc"
+Requires-Dist: grpc-stubs; extra == "grpc"
+Provides-Extra: lpg
+Requires-Dist: up-lpg~=0.1.2; extra == "lpg"
+Provides-Extra: plot
+Requires-Dist: plotly; extra == "plot"
+Requires-Dist: matplotlib==3.7.3; extra == "plot"
+Requires-Dist: kaleido; extra == "plot"
+Requires-Dist: pygraphviz; extra == "plot"
+Requires-Dist: graphviz; extra == "plot"
+Requires-Dist: pandas; extra == "plot"
+Provides-Extra: pyperplan
+Requires-Dist: up-pyperplan~=1.1.0; extra == "pyperplan"
+Provides-Extra: symk
+Requires-Dist: up-symk>=1.3.0; extra == "symk"
+Provides-Extra: tamer
+Requires-Dist: up-tamer~=1.1.4; extra == "tamer"
+Provides-Extra: tarski
+Requires-Dist: tarski[arithmetic]; extra == "tarski"
+
+Unified Planning: A library that makes it easy to formulate planning problems and to invoke automated planners.

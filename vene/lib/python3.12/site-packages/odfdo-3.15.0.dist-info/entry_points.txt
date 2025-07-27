@@ -1,0 +1,11 @@
+[console_scripts]
+odfdo-diff = odfdo.scripts.diff:main
+odfdo-folder = odfdo.scripts.folder:main
+odfdo-headers = odfdo.scripts.headers:main
+odfdo-highlight = odfdo.scripts.highlight:main
+odfdo-markdown = odfdo.scripts.to_markdown:main
+odfdo-replace = odfdo.scripts.replace:main
+odfdo-show = odfdo.scripts.show:main
+odfdo-styles = odfdo.scripts.styles:main
+odfdo-table-shrink = odfdo.scripts.table_shrink:main
+odfdo-userfield = odfdo.scripts.userfield:main
