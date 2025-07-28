@@ -4,6 +4,7 @@ import Sidebar from "@/components/Sidebar";
 import { useWaypointCapture } from "@/hooks/useWaypointCapture";
 import useMapStore from "@/hooks/useMapStore";
 import MapComponent from "@/components/MapComponent";
+import { shallow } from 'zustand/shallow'
 
 const API_KEY = process.env.NEXT_PUBLIC_LOCATIONIQ_API_KEY;
 
@@ -12,21 +13,34 @@ export default function MapLibrePage() {
   const [suggestions, setSuggestions] = useState([]);
   const [loading, setLoading] = useState(false);
 
-  const mapRef = { current: null }; // Shared ref if needed for other hooks (like waypoint capture)
+  const mapRef = { current: null };
   const { clearWaypoints } = useWaypointCapture(mapRef);
 
-  // Zustand map state
-  const handleGeojsonImport = useMapStore((s) => s.handleGeojsonImport);
-  const waypointsVisible = useMapStore((s) => s.waypointsVisible);
-  const viewState = useMapStore((state) => state.viewState);
-  const setViewState = useMapStore((state) => state.setViewState);
-  const addWaypoint = useMapStore((state) => state.addWaypoint);
-  const toggleWaypointsVisible = useMapStore((state) => state.toggleWaypointsVisible);
-  const waypoints = useMapStore((state) => state.waypoints);
-  const removeWaypoint = useMapStore((s) => s.removeWaypoint);
-  const moveWaypoint = useMapStore((s) => s.moveWaypoint);
+  const {
+    waypointsVisible,
+    toggleWaypointsVisible,
+    waypoints,
+    addWaypoint,
+    removeWaypoint,
+    moveWaypoint,
+  } = useMapStore((state) => ({
+    waypointsVisible: state.waypointsVisible,
+    toggleWaypointsVisible: state.toggleWaypointsVisible,
+    waypoints: state.waypoints,
+    addWaypoint: state.addWaypoint,
+    removeWaypoint: state.removeWaypoint,
+    moveWaypoint: state.moveWaypoint,
+    setGeojsonData: state.setGeojsonData,
+  }));
 
-  // Autocomplete search
+  const { viewState, setViewState } = useMapStore(
+    (s) => ({
+      viewState: s.viewState,
+      setViewState: s.setViewState,
+    }),
+    shallow
+  );
+
   const handleSearchInput = async (e) => {
     const value = e.target.value;
     setSearchQuery(value);
@@ -56,7 +70,16 @@ export default function MapLibrePage() {
   const handleResultClick = (place) => {
     const lon = parseFloat(place.lon);
     const lat = parseFloat(place.lat);
-    setViewState({ ...viewState, longitude: lon, latitude: lat, zoom: 14 });
+
+    // Only update if coordinates actually changed
+    if (
+      viewState.longitude !== lon ||
+      viewState.latitude !== lat ||
+      viewState.zoom !== 14
+    ) {
+      setViewState({ ...viewState, longitude: lon, latitude: lat, zoom: 14 });
+    }
+
     setSearchQuery(place.display_name || "");
     setSuggestions([]);
   };
@@ -64,7 +87,6 @@ export default function MapLibrePage() {
   return (
     <div className="flex h-screen">
       <Sidebar
-        onImportGeojson={handleGeojsonImport}
         searchQuery={searchQuery}
         onSearchChange={handleSearchInput}
         suggestions={suggestions}

@@ -2,13 +2,10 @@
 import { useState } from "react";
 import { ChevronLeftIcon, ChevronRightIcon } from "@heroicons/react/24/solid";
 import Section from "./Section";
-import dynamic from "next/dynamic";
 import useMapStore from "@/hooks/useMapStore";
-
-const FileUpload = dynamic(() => import("./FileUpload"), { ssr: false });
+import FileUpload from "./FileUpload";
 
 export default function Sidebar({
-  onImportGeojson,
   onSearchChange = () => { },
   searchQuery = "",
   suggestions = [],
@@ -26,12 +23,12 @@ export default function Sidebar({
     removeWaypoint,
     moveWaypoint,
     setViewState,
+    setGeojsonData,
   } = useMapStore();
 
   const handleSuggestionClick = (place) => {
     const lon = parseFloat(place?.lon ?? place?.geometry?.coordinates?.[0]);
     const lat = parseFloat(place?.lat ?? place?.geometry?.coordinates?.[1]);
-
     if (!isNaN(lon) && !isNaN(lat)) {
       addWaypoint({
         coordinates: [lon, lat],
@@ -39,10 +36,11 @@ export default function Sidebar({
         demand: 1
       });
       setViewState({ longitude: lon, latitude: lat, zoom: 13 });
+      console.log("Sidebar")
     }
   };
 
-  return (    
+  return (
     <div
       className={`absolute top-0 left-0 h-full bg-white dark:bg-gray-800 border-r dark:border-gray-700 shadow-lg z-20 transition-all duration-300 ease-in-out ${sidebarOpen ? "w-72" : "w-12"
         }`}
@@ -99,7 +97,9 @@ export default function Sidebar({
 
         {/* 📂 GeoJSON Upload */}
         <Section title="📂 Import GeoJSON">
-          <FileUpload onImport={onImportGeojson} />
+          <FileUpload onImport={(data) => {
+            setGeojsonData(data);
+          }} />
         </Section>
 
         {/* 🚚 Fleet */}
@@ -179,7 +179,7 @@ export default function Sidebar({
           </div>
 
           <ul className="space-y-1 text-sm max-h-48 overflow-y-auto">
-            {waypoints.map((wp, index) => {
+            {Array.isArray(waypoints) && waypoints.map((wp, index) => {
               const [lng, lat] = wp.coordinates;
               return (
                 <li key={wp.id ?? index} className="flex items-center justify-between">
@@ -230,6 +230,6 @@ export default function Sidebar({
       </div>
     </div>
 
-    
+
   );
 }

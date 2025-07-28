@@ -1,7 +1,9 @@
 'use client';
-import { create } from "zustand";
 
-const useMapStore = create((set, get) => ({
+import { create } from "zustand";
+import { devtools } from 'zustand/middleware'
+
+const useMapStore = create(devtools((set, get) => ({
   // Initial map state
   viewState: {
     longitude: 0,
@@ -16,8 +18,33 @@ const useMapStore = create((set, get) => ({
   waypointsVisible: true,
 
   // --- ViewState Actions ---
-  setViewState: (viewState) => set({ viewState }),
-  handleMapMove: (viewState) => set({ viewState }),
+  setViewState: (next) => {
+    const prev = get().viewState;
+    if (
+      prev.longitude === next.longitude &&
+      prev.latitude === next.latitude &&
+      prev.zoom === next.zoom &&
+      prev.pitch === next.pitch &&
+      prev.bearing === next.bearing
+    ) {
+      return; // Prevent update loop
+    }
+    set({ viewState: next });
+  },
+
+  handleMapMove: (next) => {
+    const prev = get().viewState;
+    if (
+      prev.longitude === next.longitude &&
+      prev.latitude === next.latitude &&
+      prev.zoom === next.zoom &&
+      prev.pitch === next.pitch &&
+      prev.bearing === next.bearing
+    ) {
+      return;
+    }
+    set({ viewState: next });
+  },
 
   // --- Waypoint Actions ---
   addWaypoint: (waypoint) =>
@@ -26,7 +53,6 @@ const useMapStore = create((set, get) => ({
     })),
 
   setWaypoints: (wps) => set({ waypoints: wps }),
-
   resetWaypoints: () => set({ waypoints: [] }),
 
   removeWaypoint: (index) =>
@@ -38,7 +64,6 @@ const useMapStore = create((set, get) => ({
     set((state) => {
       const newWaypoints = [...state.waypoints];
       const targetIndex = index + direction;
-
       if (
         newWaypoints.length < 2 ||
         index < 0 ||
@@ -47,12 +72,10 @@ const useMapStore = create((set, get) => ({
       ) {
         return {};
       }
-
       [newWaypoints[index], newWaypoints[targetIndex]] = [
         newWaypoints[targetIndex],
         newWaypoints[index],
       ];
-
       return { waypoints: newWaypoints };
     }),
 
@@ -60,73 +83,12 @@ const useMapStore = create((set, get) => ({
     set((state) => ({ waypointsVisible: !state.waypointsVisible })),
 
   // --- GeoJSON Actions ---
-  setGeojsonData: (geojson) => set({ geojsonData: geojson }),
-
-  handleGeojsonImport: (file) => {
-    const reader = new FileReader();
-
-    reader.onload = (event) => {
-      try {
-        const parsed = JSON.parse(event.target.result);
-        if (!parsed || typeof parsed !== "object") throw new Error("Not a valid GeoJSON");
-
-        set({ geojsonData: parsed });
-
-        // 🧭 Auto-zoom to GeoJSON bounds
-        if (parsed.features?.length) {
-          const coords = parsed.features.flatMap((f) => {
-            const g = f.geometry;
-            if (!g) return [];
-
-            switch (g.type) {
-              case "Point":
-                return [g.coordinates];
-              case "LineString":
-              case "MultiPoint":
-                return g.coordinates;
-              case "Polygon":
-              case "MultiLineString":
-                return g.coordinates.flat();
-              case "MultiPolygon":
-                return g.coordinates.flat(2);
-              default:
-                return [];
-            }
-          });
-
-          const longitudes = coords.map((c) => c[0]).filter(Number.isFinite);
-          const latitudes = coords.map((c) => c[1]).filter(Number.isFinite);
-
-          if (longitudes.length && latitudes.length) {
-            const bounds = {
-              minLng: Math.min(...longitudes),
-              maxLng: Math.max(...longitudes),
-              minLat: Math.min(...latitudes),
-              maxLat: Math.max(...latitudes),
-            };
-
-            const centerLng = (bounds.minLng + bounds.maxLng) / 2;
-            const centerLat = (bounds.minLat + bounds.maxLat) / 2;
-
-            set({
-              viewState: {
-                longitude: centerLng,
-                latitude: centerLat,
-                zoom: 10,
-                pitch: 0,
-                bearing: 0,
-              },
-            });
-          }
-        }
-      } catch (err) {
-        alert("Invalid GeoJSON: " + err.message);
-        set({ geojsonData: null });
-      }
-    };
-
-    reader.readAsText(file);
+  setGeojsonData: (geojson) => {
+    if (geojson && geojson.__fileNames) {
+      console.log("Uploaded files:", geojson.__fileNames);
+    }
+    set({ geojsonData: geojson });
   },
-}));
+})));
 
 export default useMapStore;

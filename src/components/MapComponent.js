@@ -14,12 +14,8 @@ export default function MapComponent() {
     geojsonData,
     addWaypoint,
     viewState,
-    setViewState,
+    handleMapMove,
   } = useMapStore();
-
-  const handleMove = useCallback((evt) => {
-    setViewState(evt.viewState);
-  }, [setViewState]);
 
   const handleMapClick = useCallback((event) => {
     const { lngLat } = event;
@@ -65,7 +61,7 @@ export default function MapComponent() {
     <DeckGL
       viewState={viewState}
       controller={true}
-      onMove={handleMove}
+      onMove={(e) => handleMapMove(e.viewState)}
       onClick={handleMapClick}
       layers={[waypointLayer, geojsonLayer].filter(Boolean)}
       style={{ position: "absolute", top: 0, bottom: 0, width: "100%" }}
