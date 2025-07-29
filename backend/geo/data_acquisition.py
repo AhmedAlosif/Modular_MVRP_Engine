@@ -2,7 +2,7 @@ import openrouteservice
 from OSMPythonTools.api import Api
 from OSMPythonTools.overpass import Overpass
 from OSMPythonTools.overpass import overpassQueryBuilder
-from OSMPythonTools.data import Data, dictRangeYears, ALL
+from OSMPythonTools.data import Data, dictRangeYears
 
 from OSMPythonTools.nominatim import Nominatim
 import os
@@ -47,20 +47,13 @@ matrix = client.distance_matrix(
     metrics=['distance', 'duration']
 )
 
-
 nyc = nominatim.query('New York')
-
 nyc.address()
-
 nyc.displayName()
-
 nyc.areaId()
-
 nyc.toJSON() #Raw data
-
 nyc = nominatim.query('New York', wkt=True)
 nyc.wkt()
-
 
 def fetch(year, city):
     areaId = nominatim.query(city).areaId()
