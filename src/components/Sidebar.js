@@ -4,7 +4,7 @@ import { ChevronLeftIcon, ChevronRightIcon } from "@heroicons/react/24/solid";
 import Section from "@/components/Section";
 import useMapStore from "@/hooks/useMapStore";
 import FileUpload from "@/components/FileUpload";
-import { fitToFeatures } from "@/components/fitToFeatures";
+import fitToFeatures  from "@/components/fitToFeatures";
 
 export default function Sidebar({
   onSearchChange = () => { },
@@ -24,7 +24,13 @@ export default function Sidebar({
     removeWaypoint,
     moveWaypoint,
     setViewState,
-    setGeojsonData,
+    setGeojsonFiles,
+    addOnClickEnabled,
+    toggleAddOnClick,
+    GeojsonFiles,
+    toggleFileVisibility,
+    removeGeojsonFile,
+    zoomToFile,
   } = useMapStore();
 
   const handleSuggestionClick = (place) => {
@@ -98,8 +104,18 @@ export default function Sidebar({
         {/* 📂 GeoJSON Upload */}
         <Section title="📂 Import GeoJSON">
           <FileUpload onImport={(data) => {
-            setGeojsonData(data);
+            setGeojsonFiles(data);
           }} />
+          {GeojsonFiles.map(file => (
+            <div key={file.id} className="p-2 border rounded mb-1">
+              <div className="font-medium">{file.name}</div>
+              <div className="flex space-x-2 mt-1">
+                <button onClick={() => toggleFileVisibility(file.id)}>👁 {file.visible ? 'Hide' : 'Show'}</button>
+                <button onClick={() => removeGeojsonFile(file.id)}>🗑 Remove</button>
+                <button onClick={() => zoomToFile(file.name)}>🎯 Zoom</button>
+              </div>
+            </div>
+          ))}
         </Section>
 
         {/* 🚚 Fleet */}
@@ -212,6 +228,16 @@ export default function Sidebar({
               );
             })}
           </ul>
+
+          <div className="flex justify-between mb-2">
+            <button
+              onClick={toggleAddOnClick}
+              className={`text-xs px-2 py-1 rounded ${addOnClickEnabled ? "bg-green-600 hover:bg-green-700" : "bg-gray-600 hover:bg-gray-700"
+                } text-white`}
+            >
+              {addOnClickEnabled ? "🖱️ Click-to-Add: On" : "🖱️ Click-to-Add: Off"}
+            </button>
+          </div>
         </Section>
 
         {/* 📤 Export */}

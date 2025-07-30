@@ -6,6 +6,7 @@ import useMapStore from "@/hooks/useMapStore";
 import MapComponent from "@/components/MapComponent";
 
 const API_KEY = process.env.NEXT_PUBLIC_LOCATIONIQ_API_KEY;
+
 export default function MapLibrePage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [suggestions, setSuggestions] = useState([]);
@@ -21,7 +22,6 @@ const {
   addWaypoint,
   removeWaypoint,
   moveWaypoint,
-  setGeojsonData,
 } = useMapStore();
 
   const handleSearchInput = async (e) => {

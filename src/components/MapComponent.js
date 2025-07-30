@@ -11,25 +11,29 @@ const MAP_STYLE = "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json
 export default function MapComponent() {
   const {
     waypoints,
-    geojsonData,
+    GeojsonFiles,
     addWaypoint,
     viewState,
-    setViewState,
     waypointsVisible,
+    addOnClickEnabled,
+    hoveredFeature,
+    setViewState,
+    setHoveredFeature,
+    clearHoveredFeature,
   } = useMapStore();
 
-  const handleMapClick = useCallback((event) => {
-    const coords = event?.coordinate || event?.lngLat;
-    if (!coords) return;
+  const handleMapClick = useCallback((info, event) => {
+    if (!info?.object) clearHoveredFeature();
+    if (!addOnClickEnabled || !info.coordinate) return;
 
-    const [lng, lat] = coords;
+    const [lng, lat] = info.coordinate;
     addWaypoint({
       coordinates: [lng, lat],
       id: Date.now(),
       demand: 1,
     });
-  }, [addWaypoint]);
-  
+  }, [addWaypoint, addOnClickEnabled, clearHoveredFeature]);
+
   const waypointLayer = useMemo(() => {
     if (!waypointsVisible || waypoints.length === 0) return null;
 
@@ -48,37 +52,64 @@ export default function MapComponent() {
     });
   }, [waypoints, waypointsVisible]);
 
-  const geojsonLayer = useMemo(() => {
-    if (!geojsonData || !geojsonData.features?.length) return null;
-    return new GeoJsonLayer({
-      id: "geojson-layer",
-      data: geojsonData,
-      pickable: true,
-      stroked: true,
-      filled: true,
-      lineWidthScale: 2,
-      lineWidthMinPixels: 1,
-      getLineColor: [0, 0, 200],
-      getFillColor: [0, 200, 100, 80],
-      getRadius: 100,
-      getLineWidth: 2,
-    });
-  }, [geojsonData]);
+  const layers = useMemo(() => {
+    return GeojsonFiles
+      .filter(file => file.visible && file?.data?.type === "FeatureCollection" && Array.isArray(file?.data?.features))
+      .map(file => new GeoJsonLayer({
+        id: `geojson-${file.id}`,
+        data: file.data,
+        pickable: true,
+        filled: true,
+        stroked: true,
+        getLineColor: [0, 0, 255],
+        getFillColor: [0, 255, 0, 50],
+        getLineWidth: 2,
+        onClick: (info) => {
+          if (info?.object) {
+            setHoveredFeature({
+              fileId: file.id,
+              properties: info.object.properties,
+              position: info.coordinate,
+              screenX: info.x,
+              screenY: info.y,
+            });
+          }
+        }
+      }));
+  }, [GeojsonFiles]);
 
   return (
-    <DeckGL
-      viewState={viewState}
-      controller={true}
-      onViewStateChange={({ viewState: next }) => setViewState(next)}
-      onClick={handleMapClick}
-      layers={[waypointLayer, geojsonLayer].filter(Boolean)}
-      style={{ position: "absolute", top: 0, bottom: 0, width: "100%" }}
-    >
-      <Map
-        mapLib={maplibregl}
-        mapStyle={MAP_STYLE}
-        {...viewState}
-      />
-    </DeckGL>
+    <>
+      <DeckGL
+        viewState={viewState}
+        controller={true}
+        onViewStateChange={({ viewState: next }) => {
+          setViewState(next);        // Update state
+          clearHoveredFeature();     // Dismiss popup
+        }}
+        onClick={handleMapClick}
+        layers={[waypointLayer, layers].filter(Boolean)}
+        style={{ position: "absolute", top: 0, bottom: 0, width: "100%" }}
+      >
+        <Map mapLib={maplibregl} mapStyle={MAP_STYLE} {...viewState} />
+      </DeckGL>
+
+      {hoveredFeature && hoveredFeature.position && (
+        <div
+          className="absolute bg-white text-black p-2 rounded shadow-lg text-sm"
+          style={{
+            left: `${hoveredFeature.screenX ?? 0}px`,
+            top: `${hoveredFeature.screenY ?? 0}px`,
+            transform: "translate(10px, -100%)",
+            pointerEvents: "none",
+            zIndex: 9999
+          }}
+        >
+          <pre className="whitespace-pre-wrap">
+            {JSON.stringify(hoveredFeature.properties, null, 2)}
+          </pre>
+        </div>
+      )}
+    </>
   );
 }

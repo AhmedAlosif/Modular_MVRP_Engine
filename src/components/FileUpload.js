@@ -1,27 +1,23 @@
 'use client';
-import { useCallback, useState, useRef } from 'react';
+import { useCallback, useState } from 'react';
 import useMapStore from '@/hooks/useMapStore';
-import { parseInBatches, selectLoader } from '@loaders.gl/core';
-import { GeoJSONLoader, KMLLoader, GPXLoader } from '@loaders.gl/gis';
+import { parseInBatches } from '@loaders.gl/core';
 import fitToFeatures from '@/components/fitToFeatures';
-
-const SUPPORTED_LOADERS = [GeoJSONLoader, KMLLoader, GPXLoader];
+import { GeoJSONLoader } from '@loaders.gl/gis';
 
 export default function FileUpload() {
   const [errors, setErrors] = useState([]);
-  const setGeojsonData = useMapStore((s) => s.setGeojsonData);
+  const addGeojsonFile = useMapStore((s) => s.addGeojsonFile);
   const setViewState = useMapStore((s) => s.setViewState);
 
   const handleFiles = useCallback(async (event) => {
     setErrors([]);
     const files = Array.from(event.target.files);
-    const geojsonData = useMapStore.getState().geojsonData;
-    const existingFiles = geojsonData?.__fileNames || [];
-    const seenNames = new Set(existingFiles);
-    let allFeatures = [];
+    const GeojsonFiles = useMapStore.getState().GeojsonFiles;
+    const existingNames = new Set(GeojsonFiles.map(f => f.name));
 
     for (const file of files) {
-      if (seenNames.has(file.name)) {
+      if (existingNames.has(file.name)) {
         setErrors((prev) => [...prev, `Skipped duplicate: ${file.name}`]);
         continue;
       }
@@ -29,17 +25,16 @@ export default function FileUpload() {
       const ext = file.name.split('.').pop().toLowerCase();
       const mime = file.type;
 
-      // Only allow known formats
       const isGeo = (ext === 'geojson' || ext === 'json' || mime.includes('geo+json'));
-
       if (!isGeo) {
         setErrors((prev) => [...prev, `Unsupported format: ${file.name}`]);
         continue;
       }
 
-      let loader;
       try {
-        const batches = await parseInBatches(file, loader);
+        const allFeatures = [];
+
+        const batches = await parseInBatches(file, GeoJSONLoader);
         for await (const batch of batches) {
           if (batch?.data) {
             const features = batch.data.features || batch.data || [];
@@ -47,23 +42,24 @@ export default function FileUpload() {
           }
         }
 
-        seenNames.add(file.name);
+        if (allFeatures.length) {
+          addGeojsonFile({
+            id: Date.now(),
+            name: file.name,
+            visible: true,
+            data: {
+              type: "FeatureCollection",
+              features: allFeatures
+            }
+          });
+
+          fitToFeatures(allFeatures, { setViewState });
+        }
       } catch (err) {
         setErrors((prev) => [...prev, `Failed to load ${file.name}: ${err.message}`]);
       }
     }
-
-    if (allFeatures.length) {
-      const merged = {
-        type: 'FeatureCollection',
-        features: allFeatures,
-        __fileNames: Array.from(seenNames),
-      };
-
-      setGeojsonData(merged);
-      fitToFeatures(allFeatures, { setViewState });
-    }
-  }, [setGeojsonData, setViewState]);
+  }, [addGeojsonFile, setViewState]);
 
   return (
     <div className="p-2">

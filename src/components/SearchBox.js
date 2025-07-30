@@ -1,6 +1,6 @@
 import { useState } from "react";
 import useMapStore from "@/hooks/useMapStore";
-import { fitToFeatures } from "@/components/fitToFeatures";
+import fitToFeatures from "@/components/fitToFeatures";
 
 const SearchBox = () => {
   const [query, setQuery] = useState("");
