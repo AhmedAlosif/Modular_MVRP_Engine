@@ -47,3 +47,6 @@ venv/
 
 #cache from data_acquisition
 cache/
+
+# debugging settings
+.vscode/

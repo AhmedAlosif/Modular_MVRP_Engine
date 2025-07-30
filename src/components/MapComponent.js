@@ -14,31 +14,39 @@ export default function MapComponent() {
     geojsonData,
     addWaypoint,
     viewState,
-    handleMapMove,
+    setViewState,
+    waypointsVisible,
   } = useMapStore();
 
   const handleMapClick = useCallback((event) => {
-    const { lngLat } = event;
+    const coords = event?.coordinate || event?.lngLat;
+    if (!coords) return;
+
+    const [lng, lat] = coords;
     addWaypoint({
-      coordinates: [lngLat.lng, lngLat.lat],
+      coordinates: [lng, lat],
       id: Date.now(),
       demand: 1,
     });
   }, [addWaypoint]);
+  
+  const waypointLayer = useMemo(() => {
+    if (!waypointsVisible || waypoints.length === 0) return null;
 
-  const waypointLayer = useMemo(() => new ScatterplotLayer({
-    id: "waypoints",
-    data: waypoints,
-    getPosition: (d) => d.coordinates,
-    getFillColor: [255, 0, 0],
-    getRadius: 10,
-    pickable: true,
-    radiusMinPixels: 5,
-    radiusMaxPixels: 15,
-    updateTriggers: {
-      getPosition: waypoints,
-    },
-  }), [waypoints]);
+    return new ScatterplotLayer({
+      id: "waypoints",
+      data: waypoints,
+      getPosition: (d) => d.coordinates,
+      getFillColor: [255, 0, 0],
+      getRadius: 10,
+      pickable: true,
+      radiusMinPixels: 5,
+      radiusMaxPixels: 15,
+      updateTriggers: {
+        getPosition: waypoints,
+      },
+    });
+  }, [waypoints, waypointsVisible]);
 
   const geojsonLayer = useMemo(() => {
     if (!geojsonData || !geojsonData.features?.length) return null;
@@ -61,7 +69,7 @@ export default function MapComponent() {
     <DeckGL
       viewState={viewState}
       controller={true}
-      onMove={(e) => handleMapMove(e.viewState)}
+      onViewStateChange={({ viewState: next }) => setViewState(next)}
       onClick={handleMapClick}
       layers={[waypointLayer, geojsonLayer].filter(Boolean)}
       style={{ position: "absolute", top: 0, bottom: 0, width: "100%" }}

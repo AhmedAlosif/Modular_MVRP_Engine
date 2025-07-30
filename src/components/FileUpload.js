@@ -1,9 +1,9 @@
 'use client';
-import { useCallback, useState } from "react";
-import useMapStore from "@/hooks/useMapStore";
-import { parseInBatches } from "@loaders.gl/core";
-import { GeoJSONLoader, KMLLoader, GPXLoader } from "@loaders.gl/gis";
-import { useRef } from "react";
+import { useCallback, useState, useRef } from 'react';
+import useMapStore from '@/hooks/useMapStore';
+import { parseInBatches, selectLoader } from '@loaders.gl/core';
+import { GeoJSONLoader, KMLLoader, GPXLoader } from '@loaders.gl/gis';
+import fitToFeatures from '@/components/fitToFeatures';
 
 const SUPPORTED_LOADERS = [GeoJSONLoader, KMLLoader, GPXLoader];
 
@@ -11,15 +11,12 @@ export default function FileUpload() {
   const [errors, setErrors] = useState([]);
   const setGeojsonData = useMapStore((s) => s.setGeojsonData);
   const setViewState = useMapStore((s) => s.setViewState);
-  const lastBounds = useRef(null);
-
 
   const handleFiles = useCallback(async (event) => {
     setErrors([]);
     const files = Array.from(event.target.files);
     const geojsonData = useMapStore.getState().geojsonData;
     const existingFiles = geojsonData?.__fileNames || [];
-
     const seenNames = new Set(existingFiles);
     let allFeatures = [];
 
@@ -29,8 +26,20 @@ export default function FileUpload() {
         continue;
       }
 
+      const ext = file.name.split('.').pop().toLowerCase();
+      const mime = file.type;
+
+      // Only allow known formats
+      const isGeo = (ext === 'geojson' || ext === 'json' || mime.includes('geo+json'));
+
+      if (!isGeo) {
+        setErrors((prev) => [...prev, `Unsupported format: ${file.name}`]);
+        continue;
+      }
+
+      let loader;
       try {
-        const batches = await parseInBatches(file, SUPPORTED_LOADERS);
+        const batches = await parseInBatches(file, loader);
         for await (const batch of batches) {
           if (batch?.data) {
             const features = batch.data.features || batch.data || [];
@@ -40,49 +49,19 @@ export default function FileUpload() {
 
         seenNames.add(file.name);
       } catch (err) {
-        setErrors((prev) => [...prev, `Failed to stream ${file.name}: ${err.message}`]);
+        setErrors((prev) => [...prev, `Failed to load ${file.name}: ${err.message}`]);
       }
     }
 
     if (allFeatures.length) {
       const merged = {
-        type: "FeatureCollection",
+        type: 'FeatureCollection',
         features: allFeatures,
         __fileNames: Array.from(seenNames),
       };
 
       setGeojsonData(merged);
-
-      // Auto-zoom view to data
-      const coords = allFeatures.flatMap(f => {
-        const g = f.geometry;
-        if (!g) return [];
-        if (g.type === "Point") return [g.coordinates];
-        if (g.type === "LineString" || g.type === "MultiPoint") return g.coordinates;
-        if (g.type === "Polygon" || g.type === "MultiLineString") return g.coordinates.flat();
-        if (g.type === "MultiPolygon") return g.coordinates.flat(2);
-        return [];
-      });
-
-      const longitudes = coords.map(c => c[0]);
-      const latitudes = coords.map(c => c[1]);
-
-      if (longitudes.length && latitudes.length) {
-        const bounds = {
-          minLng: Math.min(...longitudes),
-          maxLng: Math.max(...longitudes),
-          minLat: Math.min(...latitudes),
-          maxLat: Math.max(...latitudes),
-        };
-        setViewState({
-          longitude: (bounds.minLng + bounds.maxLng) / 2,
-          latitude: (bounds.minLat + bounds.maxLat) / 2,
-          zoom: 10,
-          pitch: 0,
-          bearing: 0,
-        });
-        console.log("FileUpload")
-      }
+      fitToFeatures(allFeatures, { setViewState });
     }
   }, [setGeojsonData, setViewState]);
 

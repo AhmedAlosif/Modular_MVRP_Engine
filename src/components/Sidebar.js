@@ -1,9 +1,10 @@
 'use client';
 import { useState } from "react";
 import { ChevronLeftIcon, ChevronRightIcon } from "@heroicons/react/24/solid";
-import Section from "./Section";
+import Section from "@/components/Section";
 import useMapStore from "@/hooks/useMapStore";
-import FileUpload from "./FileUpload";
+import FileUpload from "@/components/FileUpload";
+import { fitToFeatures } from "@/components/fitToFeatures";
 
 export default function Sidebar({
   onSearchChange = () => { },
@@ -35,8 +36,7 @@ export default function Sidebar({
         id: Date.now(),
         demand: 1
       });
-      setViewState({ longitude: lon, latitude: lat, zoom: 13 });
-      console.log("Sidebar")
+      fitToFeatures([lon, lat], { setViewState });
     }
   };
 

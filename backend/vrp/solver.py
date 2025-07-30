@@ -4,7 +4,7 @@ from vrp.core_solver import ortools_solver, get_routes
 from dotenv import load_dotenv
 from vrp.models import VRPRequest
 
-load_dotenv()
+load_dotenv(".env.local")
 API_key = os.getenv("NEXT_PUBLIC_Google_API_KEY")
 
 def solve_vrp(data: VRPRequest):

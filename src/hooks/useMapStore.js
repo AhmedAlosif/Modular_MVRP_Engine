@@ -1,9 +1,7 @@
 'use client';
-
 import { create } from "zustand";
-import { devtools } from 'zustand/middleware'
 
-const useMapStore = create(devtools((set, get) => ({
+const useMapStore = create((set, get) => ({
   // Initial map state
   viewState: {
     longitude: 0,
@@ -18,34 +16,8 @@ const useMapStore = create(devtools((set, get) => ({
   waypointsVisible: true,
 
   // --- ViewState Actions ---
-  setViewState: (next) => {
-    const prev = get().viewState;
-    if (
-      prev.longitude === next.longitude &&
-      prev.latitude === next.latitude &&
-      prev.zoom === next.zoom &&
-      prev.pitch === next.pitch &&
-      prev.bearing === next.bearing
-    ) {
-      return; // Prevent update loop
-    }
-    set({ viewState: next });
-  },
-
-  handleMapMove: (next) => {
-    const prev = get().viewState;
-    if (
-      prev.longitude === next.longitude &&
-      prev.latitude === next.latitude &&
-      prev.zoom === next.zoom &&
-      prev.pitch === next.pitch &&
-      prev.bearing === next.bearing
-    ) {
-      return;
-    }
-    set({ viewState: next });
-  },
-
+  setViewState: (next) => set({ viewState: next }),
+  
   // --- Waypoint Actions ---
   addWaypoint: (waypoint) =>
     set((state) => ({
@@ -84,11 +56,8 @@ const useMapStore = create(devtools((set, get) => ({
 
   // --- GeoJSON Actions ---
   setGeojsonData: (geojson) => {
-    if (geojson && geojson.__fileNames) {
-      console.log("Uploaded files:", geojson.__fileNames);
-    }
     set({ geojsonData: geojson });
   },
-})));
+}));
 
 export default useMapStore;

@@ -4,10 +4,8 @@ import Sidebar from "@/components/Sidebar";
 import { useWaypointCapture } from "@/hooks/useWaypointCapture";
 import useMapStore from "@/hooks/useMapStore";
 import MapComponent from "@/components/MapComponent";
-import { shallow } from 'zustand/shallow'
 
 const API_KEY = process.env.NEXT_PUBLIC_LOCATIONIQ_API_KEY;
-
 export default function MapLibrePage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [suggestions, setSuggestions] = useState([]);
@@ -16,30 +14,15 @@ export default function MapLibrePage() {
   const mapRef = { current: null };
   const { clearWaypoints } = useWaypointCapture(mapRef);
 
-  const {
-    waypointsVisible,
-    toggleWaypointsVisible,
-    waypoints,
-    addWaypoint,
-    removeWaypoint,
-    moveWaypoint,
-  } = useMapStore((state) => ({
-    waypointsVisible: state.waypointsVisible,
-    toggleWaypointsVisible: state.toggleWaypointsVisible,
-    waypoints: state.waypoints,
-    addWaypoint: state.addWaypoint,
-    removeWaypoint: state.removeWaypoint,
-    moveWaypoint: state.moveWaypoint,
-    setGeojsonData: state.setGeojsonData,
-  }));
-
-  const { viewState, setViewState } = useMapStore(
-    (s) => ({
-      viewState: s.viewState,
-      setViewState: s.setViewState,
-    }),
-    shallow
-  );
+const {
+  waypointsVisible,
+  toggleWaypointsVisible,
+  waypoints,
+  addWaypoint,
+  removeWaypoint,
+  moveWaypoint,
+  setGeojsonData,
+} = useMapStore();
 
   const handleSearchInput = async (e) => {
     const value = e.target.value;
@@ -85,7 +68,7 @@ export default function MapLibrePage() {
   };
 
   return (
-    <div className="flex h-screen">
+    <div className="flex flex-row w-screen h-screen overflow-hidden">
       <Sidebar
         searchQuery={searchQuery}
         onSearchChange={handleSearchInput}
@@ -101,7 +84,7 @@ export default function MapLibrePage() {
         onMoveWaypoint={moveWaypoint}
       />
 
-      <div className="flex-1 relative overflow-visible">
+      <div className="flex-1 relative">
         <MapComponent />
       </div>
     </div>

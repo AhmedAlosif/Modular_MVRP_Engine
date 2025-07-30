@@ -1,5 +1,6 @@
 import { useState } from "react";
 import useMapStore from "@/hooks/useMapStore";
+import { fitToFeatures } from "@/components/fitToFeatures";
 
 const SearchBox = () => {
   const [query, setQuery] = useState("");
@@ -26,7 +27,7 @@ const SearchBox = () => {
     const lat = parseFloat(result.lat);
 
     addWaypoint([lng, lat]);
-    setViewState({ longitude: lng, latitude: lat, zoom: 14, pitch: 0, bearing: 0 });
+    fitToFeatures([lng, lat], { setViewState });
     setQuery("");
     setResults([]);
   };
