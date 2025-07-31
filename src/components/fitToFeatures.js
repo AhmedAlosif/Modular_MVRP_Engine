@@ -1,6 +1,9 @@
 import { WebMercatorViewport } from '@math.gl/web-mercator';
 
 export default function fitToFeatures(features, { setViewState, padding = 60 } = {}) {
+    if (!setViewState) {
+    throw new Error("fitToFeatures: setViewState is required");
+  }
   const width = window.innerWidth;
   const height = window.innerHeight;
 

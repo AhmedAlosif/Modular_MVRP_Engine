@@ -4,16 +4,18 @@ import useMapStore from '@/hooks/useMapStore';
 import { parseInBatches } from '@loaders.gl/core';
 import fitToFeatures from '@/components/fitToFeatures';
 import { GeoJSONLoader } from '@loaders.gl/gis';
+import useVrpStore from '@/hooks/useVRPStore';
+import useWaypointStore from '@/hooks/useWaypointStore';
 
 export default function FileUpload() {
   const [errors, setErrors] = useState([]);
-  const addGeojsonFile = useMapStore((s) => s.addGeojsonFile);
+  const addGeojsonFile = useVrpStore((s) => s.addGeojsonFile);
   const setViewState = useMapStore((s) => s.setViewState);
 
   const handleFiles = useCallback(async (event) => {
     setErrors([]);
     const files = Array.from(event.target.files);
-    const GeojsonFiles = useMapStore.getState().GeojsonFiles;
+    const GeojsonFiles = useVrpStore.getState().GeojsonFiles;
     const existingNames = new Set(GeojsonFiles.map(f => f.name));
 
     for (const file of files) {
@@ -43,7 +45,7 @@ export default function FileUpload() {
         }
 
         if (allFeatures.length) {
-          addGeojsonFile({
+          const fileData = {
             id: Date.now(),
             name: file.name,
             visible: true,
@@ -51,10 +53,41 @@ export default function FileUpload() {
               type: "FeatureCollection",
               features: allFeatures
             }
-          });
+          };
 
+          addGeojsonFile(fileData);
           fitToFeatures(allFeatures, { setViewState });
+
+          // Detect enriched waypoint format
+          const waypointFeatures = allFeatures.filter(
+            f => f?.geometry?.type === 'Point' && f?.properties?.coordinates
+          );
+
+          const basicPointFeatures = allFeatures.filter(
+            f => f?.geometry?.type === 'Point' && Array.isArray(f?.geometry?.coordinates)
+          );
+
+          const addWaypoint = useWaypointStore.getState().addWaypoint;
+
+          const featuresToUse = waypointFeatures.length ? waypointFeatures : basicPointFeatures;
+
+          featuresToUse.forEach(f => {
+            const coords = f.geometry.coordinates;
+            const props = f.properties || {};
+
+            addWaypoint({
+              id: props.id ?? Date.now(),
+              coordinates: coords,
+              type: props.type ?? 'customer',
+              demand: props.demand ?? 1,
+              capacity: props.capacity ?? null,
+              serviceTime: props.serviceTime ?? null,
+              timeWindow: Array.isArray(props.timeWindow) ? props.timeWindow : null,
+              pairId: props.pairId ?? null,
+            });
+          });
         }
+
       } catch (err) {
         setErrors((prev) => [...prev, `Failed to load ${file.name}: ${err.message}`]);
       }
