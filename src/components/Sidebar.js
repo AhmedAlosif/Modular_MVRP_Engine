@@ -10,6 +10,10 @@ import SidebarSearchBox from "@/components/SidebarSearchBox";
 import useVrpStore from "@/hooks/useVRPStore";
 import useMapStore from "@/hooks/useMapStore";
 import ExportGeoJSON from "@/components/ExportGeoJSON";
+import BenchmarkSelector from "@/components/BenchmarkSelector";
+import RealWorldDatasetPanel from "@/components/RealWorldDatasetPanel";
+import CustomDatasetPanel from "@/components/CustomDatasetPanel";
+import ResultSummaryPanel from "@/components/ResultSummaryPanel";
 
 const API_KEY = process.env.NEXT_PUBLIC_LOCATIONIQ_API_KEY;
 
@@ -28,7 +32,7 @@ export default function Sidebar({ }) {
     setGeojsonFiles,
   } = useVrpStore();
 
-  const{ 
+  const {
     setViewState,
   } = useMapStore();
 
@@ -86,6 +90,7 @@ export default function Sidebar({ }) {
 
         {/* 🚚 Fleet */}
         <FleetConfigSidebar />
+
         {/* 🧠 Solver */}
         <Section title="🧠 Solver Settings">
           <select className="w-full px-2 py-1 border rounded-md text-sm dark:bg-gray-700 dark:text-white">
@@ -107,17 +112,38 @@ export default function Sidebar({ }) {
 
         {/* 🗺️ Waypoints */}
         <WaypointSidebar />
+
         {/* 📤 Export */}
         <Section title="📤 Export GeoJSON">
           <ExportGeoJSON />
         </Section>
 
+        {/* 📤 Benchmark Selector */}
+        <BenchmarkSelector
+          fetchBenchmarks={async () => {
+            // Simulated API call – replace with real fetch
+            return {
+              types: ['Solomon', 'CVRPLIB'],
+              data: {
+                Solomon: ['c101.txt', 'r101.txt', 'rc101.txt', 'r201.txt'],
+                CVRPLIB: ['A-n32-k5.vrp', 'B-n50-k7.vrp']
+              }
+            };
+          }}
+          onSelect={(type, name) => {
+            console.log('Selected:', type, name);
+            // You could trigger load into map or solver next
+          }}
+        />
+
+        {/* 📤 Real-World Dataset */}
+        <RealWorldDatasetPanel />
+
+        {/* 📤 Custom Datasets */
+          <CustomDatasetPanel />}
+
         {/* 📊 Summary */}
-        <Section title="📊 Route Summary">
-          <p className="text-sm text-gray-600 dark:text-gray-300">Distance: 12.5 km</p>
-          <p className="text-sm text-gray-600 dark:text-gray-300">CO₂: 4.3 kg</p>
-          <p className="text-sm text-gray-600 dark:text-gray-300">Vehicles: 2</p>
-        </Section>
+        <ResultSummaryPanel/>
       </div>
     </div>
   );
