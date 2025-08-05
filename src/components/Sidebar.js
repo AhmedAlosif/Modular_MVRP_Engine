@@ -14,6 +14,7 @@ import BenchmarkSelector from "@/components/BenchmarkSelector";
 import RealWorldDatasetPanel from "@/components/RealWorldDatasetPanel";
 import CustomDatasetPanel from "@/components/CustomDatasetPanel";
 import ResultSummaryPanel from "@/components/ResultSummaryPanel";
+import DataManagerPanel from "@/components/DataManagerPanel";
 
 const API_KEY = process.env.NEXT_PUBLIC_LOCATIONIQ_API_KEY;
 
@@ -71,51 +72,56 @@ export default function Sidebar({ }) {
           <SidebarSearchBox apiKey={API_KEY} onWaypoint={addWaypoint} />
         </Section>
 
-        {/* 📂 GeoJSON Upload */}
-        <Section title="📂 Import GeoJSON">
-          <FileUpload onImport={(data) => {
-            setGeojsonFiles(data);
-          }} />
-          {GeojsonFiles.map(file => (
-            <div key={file.id} className="p-2 border rounded mb-1">
-              <div className="font-medium">{file.name}</div>
-              <div className="flex space-x-2 mt-1">
-                <button onClick={() => toggleFileVisibility(file.id)}>👁 {file.visible ? 'Hide' : 'Show'}</button>
-                <button onClick={() => removeGeojsonFile(file.id)}>🗑 Remove</button>
-                <button onClick={() => zoomToFile(file.name, setViewState)}>🎯 Zoom</button>
+        {/* 📂 Data Manager (old) */}
+        <Section title="📂 Data Manager (old)">
+          {/* 📂 GeoJSON Upload */}
+          <Section title="📂 Import GeoJSON">
+            <FileUpload onImport={(data) => {
+              setGeojsonFiles(data);
+            }} />
+            {GeojsonFiles.map(file => (
+              <div key={file.id} className="p-2 border rounded mb-1">
+                <div className="font-medium">{file.name}</div>
+                <div className="flex space-x-2 mt-1">
+                  <button onClick={() => toggleFileVisibility(file.id)}>👁 {file.visible ? 'Hide' : 'Show'}</button>
+                  <button onClick={() => removeGeojsonFile(file.id)}>🗑 Remove</button>
+                  <button onClick={() => zoomToFile(file.name, setViewState)}>🎯 Zoom</button>
+                </div>
               </div>
-            </div>
-          ))}
+            ))}
+          </Section>
+          {/* 📥 Import VRP */}
+          <Section title="📥 Import VRP">
+            <input type="file" accept=".json" className="text-sm" />
+          </Section>
+          {/* 📤 Export */}
+          <Section title="📤 Export GeoJSON">
+            <ExportGeoJSON />
+          </Section>
         </Section>
 
-        {/* 🚚 Fleet */}
-        <FleetConfigSidebar />
+        {/* 📂 Data Manager */}
+            <DataManagerPanel/>
 
-        {/* 🧠 Solver */}
-        <Section title="🧠 Solver Settings">
-          <select className="w-full px-2 py-1 border rounded-md text-sm dark:bg-gray-700 dark:text-white">
-            <option>OR-Tools</option>
-            <option>VROOM</option>
-            <option>jsprit</option>
-          </select>
-          <input
-            type="number"
-            placeholder="Max stops per vehicle"
-            className="w-full px-2 py-1 border rounded-md text-sm dark:bg-gray-700 dark:text-white"
-          />
-        </Section>
-
-        {/* 📥 Import VRP */}
-        <Section title="📥 Import VRP">
-          <input type="file" accept=".json" className="text-sm" />
-        </Section>
-
-        {/* 🗺️ Waypoints */}
-        <WaypointSidebar />
-
-        {/* 📤 Export */}
-        <Section title="📤 Export GeoJSON">
-          <ExportGeoJSON />
+        {/* 🚚 Route Planner  */}
+        <Section title="🚚 Route Planner">
+          {/* 🚚 Fleet */}
+          <FleetConfigSidebar />
+          {/* 🗺️ Waypoints */}
+          <WaypointSidebar />
+          {/* 🧠 Solver */}
+          <Section title="🧠 Solver Settings">
+            <select className="w-full px-2 py-1 border rounded-md text-sm dark:bg-gray-700 dark:text-white">
+              <option>OR-Tools</option>
+              <option>VROOM</option>
+              <option>jsprit</option>
+            </select>
+            <input
+              type="number"
+              placeholder="Max stops per vehicle"
+              className="w-full px-2 py-1 border rounded-md text-sm dark:bg-gray-700 dark:text-white"
+            />
+          </Section>
         </Section>
 
         {/* 📤 Benchmark Selector */}
@@ -143,7 +149,7 @@ export default function Sidebar({ }) {
           <CustomDatasetPanel />}
 
         {/* 📊 Summary */}
-        <ResultSummaryPanel/>
+        <ResultSummaryPanel />
       </div>
     </div>
   );

@@ -1,7 +1,7 @@
 'use client';
 import { create } from 'zustand';
 import fitToFeatures from '@/components/fitToFeatures';
-import useMapStore from '@/hooks/useMapStore';
+import useWaypointStore from '@/hooks/useWaypointStore';
 
 const useVrpStore = create((set, get) => ({
   GeojsonFiles: [],
@@ -19,11 +19,29 @@ const useVrpStore = create((set, get) => ({
     })),
 
   toggleFileVisibility: (id) =>
-    set((state) => ({
-      GeojsonFiles: state.GeojsonFiles.map((f) =>
+    set((state) => {
+      const updatedFiles = state.GeojsonFiles.map(f =>
         f.id === id ? { ...f, visible: !f.visible } : f
-      ),
-    })),
+      );
+
+      // Find the file
+      const file = state.GeojsonFiles.find(f => f.id === id);
+
+      // Check if the file contains waypoint-like features
+      const containsWaypoints = file?.data?.features?.some(ft => {
+        const props = ft.properties || {};
+        const hasSourceWaypoint = props.source === 'waypoint';
+        const isOldWaypoint = typeof props.demand !== 'undefined' && Array.isArray(ft.geometry?.coordinates);
+        return hasSourceWaypoint || isOldWaypoint;
+      });
+
+      if (containsWaypoints) {
+        const toggleWaypointsVisible = useWaypointStore.getState().toggleWaypointsVisible;
+        toggleWaypointsVisible();
+      }
+
+      return { GeojsonFiles: updatedFiles };
+    }),
 
   zoomToFile: (name, setViewState) => {
     const file = get().GeojsonFiles.find((f) => f.name === name);

@@ -1,16 +1,21 @@
 'use client';
-import { useCallback, useState } from 'react';
+import { memo, useCallback, useState } from 'react';
 import useMapStore from '@/hooks/useMapStore';
 import { parseInBatches } from '@loaders.gl/core';
 import fitToFeatures from '@/components/fitToFeatures';
 import { GeoJSONLoader } from '@loaders.gl/gis';
 import useVrpStore from '@/hooks/useVRPStore';
 import useWaypointStore from '@/hooks/useWaypointStore';
+import detectFeatureTypes from '@/components/detectFeatureTypes';
 
-export default function FileUpload() {
+export default memo(FileUpload);
+
+function FileUpload({ importOptions = {} }) {
   const [errors, setErrors] = useState([]);
   const addGeojsonFile = useVrpStore((s) => s.addGeojsonFile);
   const setViewState = useMapStore((s) => s.setViewState);
+
+  const { autodetect = true, skipDuplicates = true, tagUntagged = true } = importOptions;
 
   const handleFiles = useCallback(async (event) => {
     setErrors([]);
@@ -19,9 +24,11 @@ export default function FileUpload() {
     const existingNames = new Set(GeojsonFiles.map(f => f.name));
 
     for (const file of files) {
-      if (existingNames.has(file.name)) {
-        setErrors((prev) => [...prev, `Skipped duplicate: ${file.name}`]);
-        continue;
+      if (!skipDuplicates) {
+        if (existingNames.has(file.name)) {
+          setErrors((prev) => [...prev, `Skipped duplicate: ${file.name}`]);
+          continue;
+        }
       }
 
       const ext = file.name.split('.').pop().toLowerCase();
@@ -44,34 +51,29 @@ export default function FileUpload() {
           }
         }
 
-        if (allFeatures.length) {
+        const {
+          enrichedFeatures,
+          fileTypes,
+          detectedFeatures
+        } = detectFeatureTypes(allFeatures, importOptions);
+
+
+        if (enrichedFeatures.length) {
           const fileData = {
             id: Date.now(),
             name: file.name,
             visible: true,
+            fileTypes: fileTypes.length ? fileTypes : ['unknown'],
             data: {
               type: "FeatureCollection",
-              features: allFeatures
+              features: enrichedFeatures
             }
           };
-
           addGeojsonFile(fileData);
-          fitToFeatures(allFeatures, { setViewState });
-
-          // Detect enriched waypoint format
-          const waypointFeatures = allFeatures.filter(
-            f => f?.geometry?.type === 'Point' && f?.properties?.coordinates
-          );
-
-          const basicPointFeatures = allFeatures.filter(
-            f => f?.geometry?.type === 'Point' && Array.isArray(f?.geometry?.coordinates)
-          );
+          fitToFeatures(enrichedFeatures, { setViewState });
 
           const addWaypoint = useWaypointStore.getState().addWaypoint;
-
-          const featuresToUse = waypointFeatures.length ? waypointFeatures : basicPointFeatures;
-
-          featuresToUse.forEach(f => {
+          detectedFeatures.waypoints.forEach(f => {
             const coords = f.geometry.coordinates;
             const props = f.properties || {};
 
