@@ -1,6 +1,6 @@
 'use client';
 import { create } from 'zustand';
-import fitToFeatures from '@/components/fitToFeatures';
+import fitToFeatures from '@/components/map/fitToFeatures';
 import useWaypointStore from '@/hooks/useWaypointStore';
 
 const useVrpStore = create((set, get) => ({

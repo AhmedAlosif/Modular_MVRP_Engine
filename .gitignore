@@ -50,3 +50,6 @@ cache/
 
 # debugging settings
 .vscode/
+
+# pytest cache
+.pytest_cache/

@@ -9,6 +9,7 @@ const useWaypointStore = create((set) => ({
   addWaypoint: ({
     coordinates,
     id = Date.now(),
+    fileId,
     demand = 1,
     capacity = null,
     serviceTime = null,
@@ -19,7 +20,7 @@ const useWaypointStore = create((set) => ({
     set((state) => ({
       waypoints: [
         ...state.waypoints,
-        { id, coordinates, demand, capacity, serviceTime, timeWindow, pairId, type },
+        { id, fileId, coordinates, demand, capacity, serviceTime, timeWindow, pairId, type },
       ],
     })),
 
@@ -45,6 +46,13 @@ const useWaypointStore = create((set) => ({
 
   setHoveredWaypoint: (wp) => set({ hoveredWaypoint: wp }),
   clearHoveredWaypoint: () => set({ hoveredWaypoint: null }),
+
+  removeWaypointsByFileId: (fileId) => {
+    set((state) => {
+      const updated = state.waypoints.filter((wp) => wp.fileId !== fileId);
+      return { waypoints: updated };
+    });
+  }
 }));
 
 export default useWaypointStore;

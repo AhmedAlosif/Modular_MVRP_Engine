@@ -1,6 +1,6 @@
 'use client';
-import Sidebar from "@/components/Sidebar";
-import MapComponent from "@/components/MapComponent";
+import Sidebar from "@/components/sidebar/Sidebar";
+import MapComponent from "@/components/map/MapComponent";
 
 export default function MapLibrePage() {
 

@@ -1,12 +1,19 @@
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from vrp.models import VRPRequest, VRPResponse
-from vrp.solver import solve_vrp
-from vrp.emissions import estimate_emissions
+from api.adapters_routes import router as api_router
+from api.solver_routes import router as solver_router
+from core.load_plugins import load_plugins
+from contextlib import asynccontextmanager
 
-app = FastAPI()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    load_plugins()  # <-- your plugin loading logic
+    print(">>> After load_plugins")
+    yield
 
-# CORS for frontend access
+app = FastAPI(title="VRP Adapter Backend", lifespan=lifespan)
+
+# CORS (adjust for your frontend)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -15,12 +22,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.get("/")
-def root():
-    return {"status": "Backend is live"}
+print(">>> main.py startup")
 
-@app.post("/solve", response_model=VRPResponse)
-def solve(data: VRPRequest):
-    solution = solve_vrp(data)
-    emissions = estimate_emissions(solution)
-    return {**solution, "co2": emissions}
+# Register API routes
+app.include_router(api_router, prefix="/distance-matrix")
+app.include_router(solver_router, prefix="/solver")
+    
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)

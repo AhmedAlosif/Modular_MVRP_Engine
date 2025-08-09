@@ -3,7 +3,7 @@ import { DeckGL } from "@deck.gl/react";
 import { Map } from "react-map-gl/mapbox";
 import mapboxgl from "mapbox-gl";
 import { GeoJsonLayer, ScatterplotLayer } from "@deck.gl/layers";
-import Sidebar from "@/components/Sidebar";
+import Sidebar from "@/components/sidebar/Sidebar";
 
 const MAP_STYLE = "mapbox://styles/mapbox/streets-v11"; // Replace with your token
 mapboxgl.accessToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
