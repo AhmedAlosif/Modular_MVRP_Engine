@@ -7,8 +7,8 @@ from config import Settings
 from services.solver_factory import register_solver
 from adapters.online.google_routes_adapter import GoogleRoutesAdapter
 from services.solvers.vroom_solver import VroomSolver
-from services.solvers.pygmo_solver import PyGMOSolver
 print(">>> register_adapters.py loaded")
+from services.solvers.pyomo_solver import PyomoSolver
 
 _registered = False
 def register_adapters():
@@ -24,5 +24,5 @@ def register_adapters():
     AdapterFactoryRegistry.register("haversine", lambda: HaversineAdapter())
     AdapterFactoryRegistry.register("ortools", lambda: OrToolsSolver())
     AdapterFactoryRegistry.register("vroom", lambda: VroomSolver())
-    AdapterFactoryRegistry.register("pygmo", lambda: PyGMOSolver)
     register_solver("ortools", OrToolsSolver)
+    AdapterFactoryRegistry.register("pyomo", lambda: PyomoSolver())

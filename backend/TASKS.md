@@ -17,7 +17,7 @@ This document serves as a development checklist for implementing and maintaining
 - [ ] Implement `ortools_adapter.py`
 - [ ] Implement `vroom_adapter.py`
 - [ ] Implement `up_jsprit_adapter.py` (optional)
-- [ ] Add distance engine adapters (e.g., haversine, Google, OSRM)
+- [✅] Add distance engine adapters (e.g., haversine, Google, OSRM)
 
 ---
 

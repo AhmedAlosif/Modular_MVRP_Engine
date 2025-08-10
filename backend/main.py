@@ -4,6 +4,7 @@ from api.adapters_routes import router as api_router
 from api.solver_routes import router as solver_router
 from core.load_plugins import load_plugins
 from contextlib import asynccontextmanager
+from api.data_routes import router as osm_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -27,6 +28,8 @@ print(">>> main.py startup")
 # Register API routes
 app.include_router(api_router, prefix="/distance-matrix")
 app.include_router(solver_router, prefix="/solver")
+app.include_router(osm_router)
+
     
 if __name__ == "__main__":
     import uvicorn

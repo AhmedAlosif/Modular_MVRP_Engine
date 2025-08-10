@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { UI_VEHICLES_FILEID } from '@/constants/fileIds';
 
 const defaultFleet = [
   {
@@ -9,7 +10,8 @@ const defaultFleet = [
     startTime: 0,
     endTime: 24,
     costPerDistance: 1,
-    costPerTime: 0.5
+    costPerTime: 0.5,
+    fileId: UI_VEHICLES_FILEID,
   }
 ];
 

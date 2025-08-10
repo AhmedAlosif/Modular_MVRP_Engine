@@ -1,5 +1,6 @@
 'use client';
 import { create } from 'zustand';
+import { UI_WAYPOINTS_FILEID } from '@/constants/fileIds';
 
 const useWaypointStore = create((set) => ({
   waypoints: [],
@@ -9,18 +10,18 @@ const useWaypointStore = create((set) => ({
   addWaypoint: ({
     coordinates,
     id = Date.now(),
-    fileId,
     demand = 1,
     capacity = null,
     serviceTime = null,
     timeWindow = null,
     pairId = null,
     type = 'Delivery', // Default to Delivery
+    fileId = UI_WAYPOINTS_FILEID, // <- default to UI “virtual file”
   }) =>
     set((state) => ({
       waypoints: [
         ...state.waypoints,
-        { id, fileId, coordinates, demand, capacity, serviceTime, timeWindow, pairId, type },
+        { id, coordinates, demand, capacity, serviceTime, timeWindow, pairId, type, fileId },
       ],
     })),
 

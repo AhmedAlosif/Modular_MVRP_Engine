@@ -6,6 +6,8 @@ import useMapStore from '@/hooks/useMapStore';
 import useVrpStore from '@/hooks/useVRPStore';
 import FileUpload from '@/components/data/FileUpload';
 import useWaypointStore from '@/hooks/useWaypointStore';
+import useFleetStore from '@/hooks/useFleetStore';
+import { waypointsToFeatures, vehiclesToFeatures, collectAllFeatures, downloadAsGeoJSON } from '@/utils/geojsonExport';
 
 export default function DataManagerPanel() {
     const { GeojsonFiles, removeGeojsonFile, setGeojsonFiles, zoomToFile, toggleFileVisibility, addGeojsonFile } = useVrpStore();
@@ -18,38 +20,34 @@ export default function DataManagerPanel() {
         tagUntagged: true,
     });
 
+    const waypoints = useWaypointStore(s => s.waypoints);
+    const vehicles = useFleetStore?.(s => s.vehicles) ?? []; // optional if you have it
+
     const handleExport = () => {
         const files = useVrpStore.getState().GeojsonFiles;
-        let filtered = [];
 
-        switch (exportType) {
-            case 'waypoints':
-                filtered = files.filter(f => f.data?.features?.some(ft => ft.properties?.source === 'waypoint'));
-                break;
-            case 'layers':
-                filtered = files.filter(f => f.data?.features?.some(ft => ft.properties?.source === 'map'));
-                break;
-            case 'vehicles':
-                filtered = files.filter(f => f.data?.features?.some(ft => ft.properties?.source === 'vehicle'));
-                break;
-            case 'all':
-            default:
-                filtered = files;
+        const wpFeatures = waypointsToFeatures(waypoints);
+        const vehFeatures = vehiclesToFeatures(vehicles /*, optional depot [lng,lat] */);
+
+        const all = collectAllFeatures({
+            importedFiles: files,
+            waypointFeatures: wpFeatures,
+            vehicleFeatures: vehFeatures,
+        });
+
+        // Filter by exportType
+        let featuresToExport = all;
+        if (exportType === 'waypoints') {
+            featuresToExport = all.filter(f => f?.properties?._featureType === 'waypoint');
+        } else if (exportType === 'vehicles') {
+            featuresToExport = all.filter(f => f?.properties?._featureType === 'vehicle');
+        } else if (exportType === 'layers') {
+            // "map layers" = anything not waypoint/vehicle
+            featuresToExport = all.filter(f => f?.properties?._featureType !== 'waypoint'
+                && f?.properties?._featureType !== 'vehicle');
         }
 
-        const blob = new Blob([
-            JSON.stringify({
-                type: 'FeatureCollection',
-                features: filtered.flatMap(f => f.data.features || [])
-            }, null, 2)
-        ], { type: 'application/json' });
-
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `${exportType}-export.geojson`;
-        a.click();
-        URL.revokeObjectURL(url);
+        downloadAsGeoJSON(`${exportType}-export.geojson`, featuresToExport);
     };
 
     const handleRemove = (fileId) => {
