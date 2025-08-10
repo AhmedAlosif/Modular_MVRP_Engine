@@ -24,6 +24,12 @@ export default function Home() {
             description="Mapbox-powered vector tile rendering (API key required)."
             Icon={MapIcon}
           />
+          <ProviderCard
+            name="Google Maps"
+            href="/map/googlemaps"
+            description="Standard provider for mapping (API key required)."
+            Icon={GlobeAltIcon}
+          />
         </div>
       </div>
     </main>

@@ -5,6 +5,9 @@ from adapters.offline.haversine_adapter import HaversineAdapter
 from services.solvers.ortools_solver import OrToolsSolver
 from config import Settings
 from services.solver_factory import register_solver
+from adapters.online.google_routes_adapter import GoogleRoutesAdapter
+from services.solvers.vroom_solver import VroomSolver
+from services.solvers.pygmo_solver import PyGMOSolver
 print(">>> register_adapters.py loaded")
 
 _registered = False
@@ -17,6 +20,9 @@ def register_adapters():
     print(">>> Registering ORS adapter")
     AdapterFactoryRegistry.register("google", lambda: GoogleMatrixAdapter(api_key=Settings.GOOGLE_API_KEY))
     AdapterFactoryRegistry.register("openrouteservice", lambda: ORSDistanceMatrixAdapter(api_key=Settings.ORS_API_KEY))
+    AdapterFactoryRegistry.register("google_routes", lambda: GoogleRoutesAdapter(api_key=Settings.GOOGLE_API_KEY))
     AdapterFactoryRegistry.register("haversine", lambda: HaversineAdapter())
     AdapterFactoryRegistry.register("ortools", lambda: OrToolsSolver())
+    AdapterFactoryRegistry.register("vroom", lambda: VroomSolver())
+    AdapterFactoryRegistry.register("pygmo", lambda: PyGMOSolver)
     register_solver("ortools", OrToolsSolver)

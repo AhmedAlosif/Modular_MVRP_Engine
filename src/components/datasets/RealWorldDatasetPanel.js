@@ -3,8 +3,8 @@
 import { useEffect, useState } from 'react';
 import Section from '@/components/sidebar/Section';
 
-const PROVIDERS = ['OpenStreetMap', 'OpenTransport', 'OpenDataHub'];
-const FEATURES = ['roads', 'buildings', 'pois', 'landuse'];
+const PROVIDERS = ['OpenStreetMap','Mapbox','Here','Google'];
+const FEATURES = ['roads', 'buildings', 'landuse', 'highway', 'maxspeed'];
 
 export default function RealWorldDatasetPanel() {
   const [provider, setProvider] = useState(PROVIDERS[0]);
