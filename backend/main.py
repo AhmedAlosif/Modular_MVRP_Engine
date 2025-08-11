@@ -27,10 +27,9 @@ app.add_middleware(
 print(">>> main.py startup")
 
 # Register API routes
-app.include_router(api_router, prefix="/distance-matrix")
-app.include_router(solver_router, prefix="/solver")
-app.include_router(osm_router)
+app.include_router(api_router)
 app.include_router(solver_router)
+app.include_router(osm_router)
 app.include_router(status_router)
     
 if __name__ == "__main__":

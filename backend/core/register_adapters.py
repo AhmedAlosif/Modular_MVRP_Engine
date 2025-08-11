@@ -12,7 +12,6 @@ from services.solvers.ortools_solver import OrToolsSolver
 from services.solvers.vroom_solver import VroomSolver
 from services.solvers.pyomo_solver import PyomoSolver
 
-
 _registered = False
 def register_adapters() -> None:
     global _registered

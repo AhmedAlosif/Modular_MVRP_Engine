@@ -8,7 +8,7 @@ from models.distance_matrix import MatrixRequest
 
 router = APIRouter(prefix="/solver", tags=["solver"])
 
-@router.post("/solve")
+@router.post("")
 async def solve_route(req: SolveRequest):
     try:
         # If req.matrix looks like a request (has .adapter/origins), resolve it to MatrixResult
