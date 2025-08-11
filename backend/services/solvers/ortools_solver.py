@@ -1,132 +1,86 @@
+from __future__ import annotations
 from typing import List
 from ortools.constraint_solver import routing_enums_pb2, pywrapcp
-from models.waypoints import Waypoint
+from core.interfaces import VRPSolver
+from core.exceptions import SolverRequestError
+from models.solvers import SolveRequest, Routes, Route
 from models.fleet import Vehicle
-from models.matrix import MatrixResult
-from models.solvers import SolveResult, Route
-from core.interfaces import SolverInterface
+from models.distance_matrix import MatrixResult
 
+def _as_vehicle_list(fleet_obj) -> List[Vehicle]:
+    if hasattr(fleet_obj, "vehicles"):
+        return list(fleet_obj.vehicles)
+    if isinstance(fleet_obj, list):
+        return fleet_obj
+    raise SolverRequestError("Invalid fleet: expected Fleet or List[Vehicle].")
 
-class OrToolsSolver(SolverInterface):
-    def solve(self, waypoints: List[Waypoint], fleet: Vehicle, matrix: MatrixResult) -> SolveResult:
-        num_locations = len(waypoints)
-        num_vehicles = len(fleet.id)
-        depot_index = next((i for i, wp in enumerate(waypoints) if wp.type == "depot"), 0)
+class OrToolsSolver(VRPSolver):
+    def solve(self, request: SolveRequest) -> Routes:
+        try:
+            matrix: MatrixResult = request.matrix
+            vehicles: List[Vehicle] = _as_vehicle_list(request.fleet)
+            n = len(matrix.distances)
+            if n == 0:
+                return Routes(status="error", message="Empty matrix", routes=[])
 
-        manager = pywrapcp.RoutingIndexManager(num_locations, num_vehicles, depot_index)
-        routing = pywrapcp.RoutingModel(manager)
+            num_vehicles = max(1, len(vehicles))
+            depot_index = int(request.depot_index or 0)
 
-        # Distance callback
-        def distance_callback(from_index, to_index):
-            from_node = manager.IndexToNode(from_index)
-            to_node = manager.IndexToNode(to_index)
-            return int(matrix["distances"][from_node][to_node] * 1000)
+            starts = []
+            ends = []
+            for v in vehicles:
+                starts.append(int(getattr(v, "start", depot_index)))
+                ends.append(int(getattr(v, "end", depot_index)))
+            if not starts:
+                starts = [depot_index] * num_vehicles
+                ends = [depot_index] * num_vehicles
 
-        transit_callback_index = routing.RegisterTransitCallback(distance_callback)
-        routing.SetArcCostEvaluatorOfAllVehicles(transit_callback_index)
+            manager = pywrapcp.RoutingIndexManager(n, num_vehicles, starts, ends)
+            routing = pywrapcp.RoutingModel(manager)
 
-        # Time constraint
-        if "durations" in matrix:
-            def time_callback(from_index, to_index):
-                from_node = manager.IndexToNode(from_index)
-                to_node = manager.IndexToNode(to_index)
-                return int(matrix["distances"][from_node][to_node])
+            def distance_cb(from_index, to_index):
+                f = manager.IndexToNode(from_index)
+                t = manager.IndexToNode(to_index)
+                return int(round(matrix.distances[f][t] * 1000))
 
-            time_callback_index = routing.RegisterTransitCallback(time_callback)
+            transit = routing.RegisterTransitCallback(distance_cb)
+            routing.SetArcCostEvaluatorOfAllVehicles(transit)
 
-            routing.AddDimension(
-                time_callback_index,
-                30,  # allow waiting time
-                24 * 3600,  # max time per vehicle
-                False,
-                "Time"
-            )
-            time_dimension = routing.GetDimensionOrDie("Time")
+            demands = getattr(request, "demands", None)
+            any_cap = any((v.capacity or []) for v in vehicles)
+            if demands and any_cap:
+                if len(demands) != n:
+                    raise SolverRequestError("Length of demands must match number of matrix nodes.")
+                demand_idx = routing.RegisterUnaryTransitCallback(
+                    lambda i: int(demands[manager.IndexToNode(i)]))
+                caps = [int((v.capacity or [10**12])[0]) for v in vehicles]
+                routing.AddDimensionWithVehicleCapacity(demand_idx, 0, caps, True, "Capacity")
 
-            for idx, wp in enumerate(waypoints):
-                if wp.time_window:
-                    index = manager.NodeToIndex(idx)
-                    start, end = wp.time_window
-                    time_dimension.CumulVar(index).SetRange(start, end)
+            search = pywrapcp.DefaultRoutingSearchParameters()
+            search.first_solution_strategy = routing_enums_pb2.FirstSolutionStrategy.PATH_CHEAPEST_ARC
+            search.local_search_metaheuristic = routing_enums_pb2.LocalSearchMetaheuristic.GUIDED_LOCAL_SEARCH
+            search.time_limit.FromSeconds(5)
 
-        # Pickup and delivery
-        for i, wp in enumerate(waypoints):
-            if wp.pickup_delivery_id:
-                paired_index = next((j for j, other in enumerate(waypoints)
-                                     if other.pickup_delivery_id == wp.pickup_delivery_id and j != i), None)
-                if paired_index is not None:
-                    pickup_index = manager.NodeToIndex(min(i, paired_index))
-                    delivery_index = manager.NodeToIndex(max(i, paired_index))
-                    routing.AddPickupAndDelivery(pickup_index, delivery_index)
-                    routing.solver().Add(
-                        routing.VehicleVar(pickup_index) == routing.VehicleVar(delivery_index)
-                    )
-                    routing.solver().Add(
-                        time_dimension.CumulVar(pickup_index) <= time_dimension.CumulVar(delivery_index)
-                    )
+            solution = routing.SolveWithParameters(search)
+            if not solution:
+                return Routes(status="error", message="No solution found", routes=[])
 
-        # Capacity (if used)
-        if any(wp.demand for wp in waypoints):
-            demands = [wp.demand or 0 for wp in waypoints]
+            out_routes: List[Route] = []
+            for v in range(num_vehicles):
+                idx = routing.Start(v)
+                path_idx = []
+                while not routing.IsEnd(idx):
+                    node = manager.IndexToNode(idx)
+                    path_idx.append(node)
+                    idx = solution.Value(routing.NextVar(idx))
+                path_idx.append(manager.IndexToNode(idx))
+                out_routes.append(
+                    Route(vehicle_id=str(getattr(vehicles[v], "id", v)),
+                          waypoint_ids=[str(i) for i in path_idx])
+                )
 
-            def demand_callback(from_index):
-                from_node = manager.IndexToNode(from_index)
-                return demands[from_node]
-
-            demand_callback_index = routing.RegisterUnaryTransitCallback(demand_callback)
-
-            routing.AddDimensionWithVehicleCapacity(
-                demand_callback_index,
-                0,  # null capacity slack
-                [v.capacity or 0 for v in fleet.vehicles],
-                True,
-                "Capacity"
-            )
-
-        # Emission cost (as penalty to distance)
-        if any(wp.emissions for wp in waypoints):
-            emissions = [wp.emissions or 0 for wp in waypoints]
-
-            def emission_cost_callback(from_index, to_index):
-                from_node = manager.IndexToNode(from_index)
-                to_node = manager.IndexToNode(to_index)
-                return int((matrix["distances"][from_node][to_node] * 1000) +
-                           (emissions[from_node] + emissions[to_node]) / 2)
-
-            emission_index = routing.RegisterTransitCallback(emission_cost_callback)
-            routing.SetArcCostEvaluatorOfAllVehicles(emission_index)
-
-        # Search parameters
-        search_parameters = pywrapcp.DefaultRoutingSearchParameters()
-        search_parameters.first_solution_strategy = (
-            routing_enums_pb2.FirstSolutionStrategy.PATH_CHEAPEST_ARC
-        )
-        search_parameters.local_search_metaheuristic = (
-            routing_enums_pb2.LocalSearchMetaheuristic.GUIDED_LOCAL_SEARCH
-        )
-        search_parameters.time_limit.seconds = 10
-
-        # Solve
-        solution = routing.SolveWithParameters(search_parameters)
-        if not solution:
-            raise RuntimeError("OR-Tools solver failed to find a solution.")
-
-        # Parse solution
-        routes = []
-        for vehicle_id in range(num_vehicles):
-            index = routing.Start(vehicle_id)
-            stops = []
-            while not routing.IsEnd(index):
-                node_index = manager.IndexToNode(index)
-                stops.append(waypoints[node_index])
-                index = solution.Value(routing.NextVar(index))
-            node_index = manager.IndexToNode(index)
-            stops.append(waypoints[node_index])
-
-            if len(stops) > 1:
-                routes.append(Route(
-                    vehicle_id=vehicle_id,
-                    waypoints=stops
-                ))
-
-        return SolveResult(status="success", routes=routes)
+            return Routes(status="success", routes=out_routes)
+        except SolverRequestError:
+            raise
+        except Exception as e:
+            raise SolverRequestError(f"OR-Tools failed: {e}")

@@ -1,39 +1,16 @@
+from __future__ import annotations
 from abc import ABC, abstractmethod
-from typing import List, Tuple, Dict, Any
+from models.distance_matrix import MatrixRequest, MatrixResult
 from models.solvers import SolveRequest, Routes
 
 class DistanceMatrixAdapter(ABC):
-    """
-    Interface for Distance Matrix Adapters.
-    All distance matrix adapters should implement this interface.
-    """
-
+    """All online/offline distance matrix providers must implement this."""
     @abstractmethod
-    def get_matrix(
-        self,
-        coordinates: List[Tuple[float, float]],
-        profile: str = 'driving-car',
-        metrics: List[str] = ['duration', 'distance']
-    ) -> Dict[str, Any]:
-        """
-        Compute the distance/duration matrix for given coordinates.
+    async def get_matrix(self, request: MatrixRequest) -> MatrixResult:
+        ...
 
-        Args:
-            coordinates: List of (latitude, longitude) tuples.
-            profile: Routing profile, e.g. 'driving-car'.
-            metrics: Metrics to include, e.g. ['distance', 'duration'].
-
-        Returns:
-            Dictionary with distance matrix data.
-        """
-        pass
 class VRPSolver(ABC):
+    """All solvers (OR-Tools, VROOM, Pyomo, …) must implement this."""
     @abstractmethod
-    def solve(self, req: SolveRequest) -> Routes:
-        pass
-
-class SolverInterface(VRPSolver):
-    """
-    Marker interface for all solver implementations.
-    """
-    pass
+    def solve(self, request: SolveRequest) -> Routes:
+        ...

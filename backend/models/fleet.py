@@ -18,3 +18,6 @@ class Vehicle(BaseModel):
 class FleetConfig(BaseModel):
     vehicles: List[Vehicle]
     capacity: Optional[int] = None
+
+class Fleet(BaseModel):
+    vehicles: List[Vehicle]

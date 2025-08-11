@@ -1,4 +1,3 @@
-import importlib
 from core.register_adapters import register_adapters
 from core.adapter_factory_registry import AdapterFactoryRegistry
 

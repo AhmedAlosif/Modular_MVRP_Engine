@@ -1,6 +1,6 @@
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel
-from models.matrix import MatrixResult
+from models.distance_matrix import MatrixResult
 from models.fleet import Vehicle
 
 class SolveRequest(BaseModel):
