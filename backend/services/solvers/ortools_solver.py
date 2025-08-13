@@ -1,165 +1,240 @@
 # services/solvers/ortools_solver.py
 from __future__ import annotations
-
 from typing import List, Optional
-
-from ortools.constraint_solver import routing_enums_pb2, pywrapcp
-
+from ortools.constraint_solver import pywrapcp, routing_enums_pb2
 from core.interfaces import VRPSolver
-from core.exceptions import SolverRequestError
-from models.solvers import SolveRequest, Routes, Route
-from models.fleet import Vehicle
+from core.exceptions import SolverError
 from models.distance_matrix import MatrixResult
-
-
-def _as_vehicle_list(fleet_obj) -> List[Vehicle]:
-    if hasattr(fleet_obj, "vehicles"):
-        return list(fleet_obj.vehicles)
-    if isinstance(fleet_obj, list):
-        return fleet_obj
-    raise SolverRequestError("Invalid fleet: expected Fleet or List[Vehicle].")
-
+from models.fleet import Vehicle
+from models.solvers import Routes, Route, PickupDeliveryPair
 
 class OrToolsSolver(VRPSolver):
-    def solve(self, request: SolveRequest) -> Routes:
-        try:
-            matrix: MatrixResult = request.matrix
-            dist_km = matrix.distances
-            n = len(dist_km)
-            if n == 0:
-                return Routes(status="error", message="Empty matrix", routes=[])
+    """
+    CVRP/VRPTW/PDPTW using OR-Tools.
+    - Weighted arc cost: distance + time (optional)
+    - Capacity constraints
+    - Node time windows + vehicle start/end TW
+    - Service times (added at the 'from' node)
+    - Pickup & Delivery pairs (same-vehicle + precedence)
+    """
 
-            vehicles: List[Vehicle] = _as_vehicle_list(request.fleet)
-            num_vehicles = max(1, len(vehicles))
-            depot = int(request.depot_index or 0)
+    def solve(
+        self,
+        fleet: List[Vehicle],
+        matrix: MatrixResult,
+        depot_index: int = 0,
+        demands: Optional[List[int]] = None,
+        node_time_windows: Optional[List[Optional[List[int]]]] = None,
+        node_service_times: Optional[List[int]] = None,
+        pickup_delivery_pairs: Optional[List[PickupDeliveryPair]] = None,
+        weights: Optional[dict] = None,
+    ) -> Routes:
+        # ----------- Validate inputs -----------
+        if not matrix or not matrix.distances:
+            raise SolverError("OrToolsSolver: 'matrix.distances' is required.")
+        n = len(matrix.distances)
+        if any(len(row) != n for row in matrix.distances):
+            raise SolverError("OrToolsSolver: distance matrix must be square.")
 
-            # Starts/ends
-            starts = [int(getattr(v, "start", depot)) for v in vehicles] or [depot] * num_vehicles
-            ends   = [int(getattr(v, "end", depot))   for v in vehicles] or [depot] * num_vehicles
+        if demands and len(demands) != n:
+            raise SolverError("OrToolsSolver: 'demands' length must match matrix size.")
 
-            manager = pywrapcp.RoutingIndexManager(n, num_vehicles, starts, ends)
-            routing = pywrapcp.RoutingModel(manager)
+        if node_time_windows and len(node_time_windows) != n:
+            raise SolverError("OrToolsSolver: 'node_time_windows' length must match matrix size.")
 
-            # --- Distance cost (km -> meters int) ---
-            def distance_cb(from_index, to_index):
-                f = manager.IndexToNode(from_index)
-                t = manager.IndexToNode(to_index)
-                return int(round(dist_km[f][t] * 1000))
-            transit_distance = routing.RegisterTransitCallback(distance_cb)
-            routing.SetArcCostEvaluatorOfAllVehicles(transit_distance)
+        if node_service_times and len(node_service_times) != n:
+            raise SolverError("OrToolsSolver: 'node_service_times' length must match matrix size.")
 
-            # --- Capacity (optional) ---
-            demands = request.demands
-            any_cap = any((v.capacity or []) for v in vehicles)
-            if demands and any_cap:
-                if len(demands) != n:
-                    raise SolverRequestError("Length of demands must match number of nodes.")
-                demand_idx = routing.RegisterUnaryTransitCallback(lambda i: int(demands[manager.IndexToNode(i)]))
-                caps = [int((v.capacity or [10**12])[0]) for v in vehicles]
-                routing.AddDimensionWithVehicleCapacity(demand_idx, 0, caps, True, "Capacity")
+        if not fleet or len(fleet) == 0:
+            raise SolverError("OrToolsSolver: at least one vehicle is required.")
 
-            # --- Time windows (optional) ---
-            node_tw = request.node_time_windows  # List[ [start,end] | None ]
-            service_times = request.node_service_times or [0] * n
-            durations = matrix.durations  # seconds, if provided
+        # ----------- Index manager & model -----------
+        starts = [v.start if v.start is not None else depot_index for v in fleet]
+        ends = [v.end if v.end is not None else depot_index for v in fleet]
 
-            use_time = bool(node_tw) or any(getattr(v, "time_window", None) for v in vehicles)
-            if use_time:
-                def time_cb(from_index, to_index):
-                    f = manager.IndexToNode(from_index)
-                    t = manager.IndexToNode(to_index)
-                    if durations is not None:
-                        base = float(durations[f][t])
-                    else:
-                        speed_kmh = 40.0  # fallback speed
-                        base = (dist_km[f][t] / max(speed_kmh, 1e-6)) * 3600.0
-                    base += float(service_times[f] or 0)  # service at FROM
-                    return int(round(base))
+        manager = pywrapcp.RoutingIndexManager(n, len(fleet), starts, ends)
+        routing = pywrapcp.RoutingModel(manager)
 
-                transit_time = routing.RegisterTransitCallback(time_cb)
-                horizon = 24 * 3600
-                routing.AddDimension(
-                    transit_time,
-                    slack_max=3600,     # 1h waiting
-                    capacity=horizon,   # max cumul
-                    fix_start_cumul_to_zero=True,
-                    name="Time",
-                )
-                time_dim = routing.GetDimensionOrDie("Time")
+        # ----------- Weights for arc cost -----------
+        w_dist = float(weights.get("distance", 1.0)) if weights else 1.0
+        w_time = float(weights.get("time", 0.0)) if weights else 0.0
+        COST_SCALE = 1000  # keep integer evaluator
 
-                # Vehicle time windows at starts/ends (+ optional max_duration)
-                for v_idx, v in enumerate(vehicles):
-                    start = 0
-                    end = horizon
-                    tw = getattr(v, "time_window", None)
-                    if isinstance(tw, (list, tuple)) and len(tw) == 2:
-                        start, end = int(tw[0]), int(tw[1])
-                    time_dim.CumulVar(routing.Start(v_idx)).SetRange(start, end)
-                    time_dim.CumulVar(routing.End(v_idx)).SetRange(0, horizon)
-                    max_dur = getattr(v, "max_duration", None)
-                    if max_dur:
-                        time_dim.CumulVar(routing.End(v_idx)).SetRange(0, int(max_dur))
+        # ----------- Transit callbacks -----------
+        # Distance (km) + optional time (hr) weighted
+        def cost_callback(from_index: int, to_index: int) -> int:
+            i = manager.IndexToNode(from_index)
+            j = manager.IndexToNode(to_index)
+            d_km = float(matrix.distances[i][j])
+            t_hr = 0.0
+            if matrix.durations:
+                # durations expected in seconds
+                t_sec = float(matrix.durations[i][j])
+                t_hr = t_sec / 3600.0
+            cost = (w_dist * d_km) + (w_time * t_hr)
+            return int(round(cost * COST_SCALE))
 
-                # Node time windows
-                if node_tw:
-                    for node in range(n):
-                        tw = node_tw[node] if node < len(node_tw) else None
-                        if tw and len(tw) == 2:
-                            start, end = int(tw[0]), int(tw[1])
-                            index = manager.NodeToIndex(node)
-                            time_dim.CumulVar(index).SetRange(start, end)
+        cost_index = routing.RegisterTransitCallback(cost_callback)
+        routing.SetArcCostEvaluatorOfAllVehicles(cost_index)
 
-            # Search
-            search = pywrapcp.DefaultRoutingSearchParameters()
-            search.first_solution_strategy = routing_enums_pb2.FirstSolutionStrategy.PATH_CHEAPEST_ARC
-            search.local_search_metaheuristic = routing_enums_pb2.LocalSearchMetaheuristic.GUIDED_LOCAL_SEARCH
-            search.time_limit.FromSeconds(5)
+        # Favor fewer vehicles: default fixed cost; overridable via weights['vehicle_fixed_cost'] (in "distance units").
+        vehicle_fixed_cost = None
+        if weights and isinstance(weights.get("vehicle_fixed_cost"), (int, float)):
+            vehicle_fixed_cost = float(weights["vehicle_fixed_cost"])
+        else:
+            # A reasonable default: ~100 "km" worth of cost per extra vehicle
+            vehicle_fixed_cost = 100.0
 
-            solution = routing.SolveWithParameters(search)
-            if not solution:
-                return Routes(status="error", message="No solution found", routes=[])
+        routing.SetFixedCostOfAllVehicles(int(round(vehicle_fixed_cost * COST_SCALE)))
 
-            # Build routes + totals
-            out_routes: List[Route] = []
-            objective = solution.ObjectiveValue() if hasattr(solution, "ObjectiveValue") else None
+        # ----------- Time dimension (if we have durations or TWs) -----------
+        time_dimension = None
+        if matrix.durations or node_time_windows:
+            service_times = node_service_times if node_service_times else [0] * n
 
-            for v in range(num_vehicles):
-                idx = routing.Start(v)
-                path_idx: List[int] = []
-                while not routing.IsEnd(idx):
-                    node = manager.IndexToNode(idx)
-                    path_idx.append(node)
-                    idx = solution.Value(routing.NextVar(idx))
-                path_idx.append(manager.IndexToNode(idx))
+            if matrix.durations:
+                # Use given durations (assumed consistent units with TWs and service times)
+                def time_callback(from_index: int, to_index: int) -> int:
+                    i = manager.IndexToNode(from_index)
+                    j = manager.IndexToNode(to_index)
+                    travel = float(matrix.durations[i][j])
+                    return int(round(travel + (service_times[i] or 0)))
+            else:
+                # No durations: use distance as time unit to match instance TWs/service times
+                def time_callback(from_index: int, to_index: int) -> int:
+                    i = manager.IndexToNode(from_index)
+                    j = manager.IndexToNode(to_index)
+                    travel = float(matrix.distances[i][j])
+                    return int(round(travel + (service_times[i] or 0)))
 
-                total_dist_km = 0.0
-                total_dur_s: Optional[float] = 0.0 if (durations is not None or use_time) else None
-                for a, b in zip(path_idx, path_idx[1:]):
-                    total_dist_km += float(dist_km[a][b])
-                    if total_dur_s is not None:
-                        if durations is not None:
-                            total_dur_s += float(durations[a][b]) + float(service_times[a] or 0)
-                        else:
-                            speed_kmh = 40.0
-                            total_dur_s += (dist_km[a][b] / speed_kmh) * 3600.0 + float(service_times[a] or 0)
+            time_index = routing.RegisterTransitCallback(time_callback)
 
-                veh = vehicles[v]
-                ef = float(getattr(veh, "emissions_per_km", 0.0) or 0.0)  # kg/km
-                emissions_kg = ef * total_dist_km if ef else None
+            # Allow waiting; give a large horizon so TWs can be satisfied
+            routing.AddDimension(
+                time_index,
+                #slack_max=0,               # no waiting slack here; add if you want waiting allowed
+                slack_max=10**9,           # allow waiting so fewer vehicles can serve TWs
+                capacity=10**9,            # large horizon
+                fix_start_cumul_to_zero=True,
+                name="Time",
+            )
+            time_dimension = routing.GetDimensionOrDie("Time")
+        # ----------- Capacity dimension -----------
+        if demands:
+            # per-vehicle capacity (first capacity dim; default huge if missing)
+            caps = [int(v.capacity[0]) if (v.capacity and len(v.capacity) > 0) else 10**9 for v in fleet]
 
-                out_routes.append(
-                    Route(
-                        vehicle_id=str(getattr(veh, "id", v)),
-                        waypoint_ids=[str(i) for i in path_idx],
-                        total_distance=total_dist_km,
-                        total_duration=int(total_dur_s) if isinstance(total_dur_s, (int, float)) else None,
-                        emissions=emissions_kg,
-                        metadata={"objective": objective} if objective is not None else None,
+            def demand_cb(from_index: int) -> int:
+                i = manager.IndexToNode(from_index)
+                return int(demands[i])
+
+            demand_index = routing.RegisterUnaryTransitCallback(demand_cb)
+            routing.AddDimensionWithVehicleCapacity(
+                demand_index,  # demand callback
+                0,             # no slack
+                caps,          # vehicle capacities
+                True,          # start cumul to zero
+                "Capacity",
+            )
+
+        # ----------- Node time windows -----------
+        if time_dimension and node_time_windows:
+            for node, tw in enumerate(node_time_windows):
+                if not tw:
+                    continue
+                start, end = int(tw[0]), int(tw[1])
+                cumul = time_dimension.CumulVar(manager.NodeToIndex(node))
+                cumul.SetRange(start, end)
+
+        # Vehicle start/end time windows (if provided)
+        if time_dimension:
+            for v_id, v in enumerate(fleet):
+                if getattr(v, "time_window", None):
+                    vs, ve = int(v.time_window[0]), int(v.time_window[1])
+                    time_dimension.CumulVar(routing.Start(v_id)).SetRange(vs, ve)
+                    time_dimension.CumulVar(routing.End(v_id)).SetRange(vs, ve)
+
+        # ----------- Pickup & Delivery -----------
+        if pickup_delivery_pairs:
+            for pair in pickup_delivery_pairs:
+                p_idx = manager.NodeToIndex(int(pair.pickup))
+                d_idx = manager.NodeToIndex(int(pair.delivery))
+                routing.AddPickupAndDelivery(p_idx, d_idx)
+                # same vehicle
+                routing.solver().Add(routing.VehicleVar(p_idx) == routing.VehicleVar(d_idx))
+                # precedence in time (if time dim exists)
+                if time_dimension is not None:
+                    routing.solver().Add(
+                        time_dimension.CumulVar(p_idx) <= time_dimension.CumulVar(d_idx)
                     )
-                )
 
-            return Routes(status="success", message="Solution found", routes=out_routes)
-        except SolverRequestError:
-            raise
-        except Exception as e:
-            raise SolverRequestError(f"OR-Tools failed: {e}")
+        # ----------- Search parameters -----------
+        search = pywrapcp.DefaultRoutingSearchParameters()
+        search.first_solution_strategy = routing_enums_pb2.FirstSolutionStrategy.PATH_CHEAPEST_ARC
+        search.local_search_metaheuristic = routing_enums_pb2.LocalSearchMetaheuristic.GUIDED_LOCAL_SEARCH
+        search.time_limit.FromSeconds(10)
+
+        # ----------- Solve -----------
+        solution = routing.SolveWithParameters(search)
+        # NOTE: routing_enums_pb2.RoutingStatus does not exist in Python bindings.
+        # Use presence of 'solution' (success), and optionally routing.status() for an int.
+        if solution is None:
+            status = routing.status() if hasattr(routing, "status") else None
+            # quick infeasibility hints
+            caps = [int(v.capacity[0]) if v.capacity else 0 for v in fleet]
+            total_cap = sum(caps)
+            raise SolverError("No feasible solution found.")
+        # ----------- Extract routes -----------
+        routes: List[Route] = []
+        # build quick helper for emissions cost per vehicle
+        def _emissions_per_km(v: Vehicle) -> float:
+            return float(getattr(v, "emissions_per_km", 0.0) or 0.0)
+
+        for v_id, veh in enumerate(fleet):
+            index = routing.Start(v_id)
+            path_nodes: List[int] = []
+            total_km = 0.0
+            total_sec = 0.0
+
+            while not routing.IsEnd(index):
+                node = manager.IndexToNode(index)
+                path_nodes.append(node)
+
+                next_index = solution.Value(routing.NextVar(index))
+                if not routing.IsEnd(next_index):
+                    i = node
+                    j = manager.IndexToNode(next_index)
+                    # accumulate from the matrix
+                    total_km += float(matrix.distances[i][j])
+                    if matrix.durations:
+                        total_sec += float(matrix.durations[i][j])
+
+                index = next_index
+
+            # add the end node
+            end_node = manager.IndexToNode(index)
+            path_nodes.append(end_node)
+
+
+            # --- NEW: filter out depot-only / unused routes
+            depot_node = starts[v_id]  # original node index of this vehicle's start
+            only_depot = all(n == depot_node for n in path_nodes)
+            if only_depot and total_km == 0 and (not matrix.durations or total_sec == 0):
+                continue
+            # ---
+
+            # emissions (simple: per-vehicle factor * route km)
+            emissions = total_km * _emissions_per_km(veh)
+
+            routes.append(
+                Route(
+                    vehicle_id=str(veh.id),
+                    waypoint_ids=[str(n) for n in path_nodes],
+                    total_distance=total_km,
+                    total_duration=int(total_sec) if total_sec else None,
+                    emissions=emissions if emissions else None,
+                    metadata=None,
+                )
+            )
+
+        return Routes(status="success", message="Solution found", routes=routes)

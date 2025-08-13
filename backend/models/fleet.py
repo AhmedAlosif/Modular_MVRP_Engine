@@ -1,7 +1,6 @@
 from typing import List, Optional
 from pydantic import BaseModel
 
-
 class Vehicle(BaseModel):
     id: str
     capacity: Optional[List[int]] = None  # Multiple dimensions (weight, volume, etc.)

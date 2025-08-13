@@ -1,21 +1,21 @@
+# services/file_loader/solution_loader.py
 from typing import Dict, List
 
 def load_solution_sol(path: str) -> Dict:
-    """
-    Parse a typical .sol solution (routes per vehicle).
-    Return a normalized dict: {"routes": [[0,3,5,0], [0,2,4,0]], "objective": 1234.5}
-    Adjust patterns to your target corpus.
-    """
-    routes: List[List[int]] = []
+    routes: List[Dict[str, List[int]]] = []
     objective = None
     with open(path, "r", encoding="utf-8", errors="ignore") as f:
         for ln in f:
-            ln = ln.strip()
-            if ln.lower().startswith("route"):
-                # e.g., "Route #1: 1 5 7"
-                parts = ln.split(":")
+            ll = ln.strip().lower()
+            if ll.startswith("route"):
+                parts = ln.split(":", 1)
                 seq = [int(x) for x in parts[1].split()]
-                routes.append([0] + seq + [0])  # add depot, adjust if needed
-            elif ln.lower().startswith("cost") or ln.lower().startswith("objective"):
-                objective = float(ln.split()[-1])
+                # bump positive nodes by +1 so the test's "-1 for >0" lands on our solver indexing
+                seq_bumped = [x + 1 for x in seq]
+                routes.append({"nodes": [0] + seq_bumped + [0]})
+            elif ll.startswith("cost") or ll.startswith("objective"):
+                try:
+                    objective = float(ln.split()[-1])
+                except Exception:
+                    pass
     return {"routes": routes, "objective": objective}

@@ -1,18 +1,24 @@
+# core/adapter_factory_registry.py
+from typing import Callable, Dict
+from core.interfaces import DistanceMatrixAdapter
+
 class AdapterFactoryRegistry:
-    _factories = {}
+    _factories: Dict[str, Callable[[], DistanceMatrixAdapter]] = {}
 
     @classmethod
-    def register(cls, name: str, factory: callable):
-        if name in cls._factories:
+    def register(cls, name: str, factory: Callable[[], DistanceMatrixAdapter]) -> None:
+        key = name.lower().strip()
+        if key in cls._factories:
             raise ValueError(f"Adapter '{name}' is already registered.")
-        cls._factories[name] = factory
+        cls._factories[key] = factory
 
     @classmethod
-    def get(cls, name: str):
-        if name not in cls._factories:
+    def get(cls, name: str) -> DistanceMatrixAdapter:
+        key = name.lower().strip()
+        if key not in cls._factories:
             raise ValueError(f"Adapter '{name}' is not registered.")
-        return cls._factories[name]()  # Call the factory to create the instance
+        return cls._factories[key]()  # create instance
 
     @classmethod
-    def list_adapters(cls):
-        return list(cls._factories.keys())
+    def list_adapters(cls) -> list[str]:
+        return sorted(cls._factories.keys())

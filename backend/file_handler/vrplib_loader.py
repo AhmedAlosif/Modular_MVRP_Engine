@@ -1,28 +1,11 @@
-# services/file_loader/vrplib_loader.py
+# file_handler/vrplib_loader.py
 from __future__ import annotations
 import math
 import re
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
-from models.waypoints import Waypoint
-from models.fleet import Vehicle, Fleet
-from models.distance_matrix import MatrixResult
 
-class VRPInstance:
-    """Container returned by the loader."""
-    def __init__(
-        self,
-        waypoints: List[Waypoint],
-        fleet: Fleet,
-        depot_index: int,
-        matrix: Optional[MatrixResult] = None,
-        meta: Optional[Dict] = None,
-    ):
-        self.waypoints = waypoints
-        self.fleet = fleet
-        self.depot_index = depot_index
-        self.matrix = matrix
-        self.meta = meta or {}
+# ---------------- helpers ----------------
 
 def _euclidean(p1: Tuple[float, float], p2: Tuple[float, float]) -> float:
     dx = p1[0] - p2[0]
@@ -39,13 +22,13 @@ def _build_distance_matrix_xy(coords: List[Tuple[float, float]]) -> List[List[fl
             mtx[j][i] = d
     return mtx
 
-def _is_solomon(contents: str) -> bool:
-    return "TIME_WINDOW_SECTION" in contents or "TIME WINDOWS" in contents
-
 def _tokenize_lines(text: str) -> List[str]:
     return [ln.strip() for ln in text.splitlines() if ln.strip()]
 
 def _read_sections(lines: List[str]) -> Dict[str, List[str]]:
+    """
+    Very simple CVRPLIB-ish section splitter.
+    """
     sections: Dict[str, List[str]] = {}
     current = None
     for ln in lines:
@@ -70,6 +53,7 @@ def _parse_vehicle_header(lines: List[str]) -> Tuple[int, int]:
     cap = None
     txt = "\n".join(lines).upper()
 
+    # existing patterns
     m = re.search(r"\bVEHICLE\b.*?NUMBER\s+CAPACITY\s+(\d+)\s+(\d+)", txt, re.S)
     if m:
         num = int(m.group(1))
@@ -82,6 +66,29 @@ def _parse_vehicle_header(lines: List[str]) -> Tuple[int, int]:
         m3 = re.search(r"VEHICLES?\s*:\s*(\d+)", txt)
         if m3:
             num = int(m3.group(1))
+
+    # NEW: Solomon classic header
+    if num is None or cap is None:
+        try:
+            for i, ln in enumerate(lines):
+                if ln.strip().upper() == "VEHICLE":
+                    # scan a few lines ahead for the numeric row "25  200"
+                    for j in range(i + 1, min(i + 8, len(lines))):
+                        s = lines[j].strip()
+                        if not s:
+                            continue
+                        up = s.upper().replace(" ", "")
+                        if up.startswith("NUMBER") or "CAPACITY" in up:
+                            continue  # skip the title row
+                        parts = s.split()
+                        if len(parts) >= 2 and parts[0].isdigit() and parts[1].isdigit():
+                            if num is None:
+                                num = int(parts[0])
+                            if cap is None:
+                                cap = int(parts[1])
+                            raise StopIteration
+        except StopIteration:
+            pass
 
     if num is None:
         num = 1
@@ -141,9 +148,134 @@ def _parse_depot_section(lines: List[str]) -> List[int]:
             depots.append(int(ln))
     return depots
 
-def load_vrplib(file_path: str | Path, compute_matrix: bool = True) -> VRPInstance:
+def _is_solomon_text(contents: str) -> bool:
+    up = contents.upper()
+    return ("CUST" in up and "XCOORD" in up and "YCOORD" in up) or "CUSTOMER" in up
+
+# -------- Solomon parser (classic Solomon .txt like c101.txt) --------
+
+def _parse_solomon_text(contents: str) -> Dict[str, any]:
+    """
+    Minimal, robust parser for Solomon format:
+    Header with (maybe) vehicle/capacity, then a table:
+    CUST NO.  XCOORD  YCOORD  DEMAND  READY TIME  DUE DATE  SERVICE TIME
+    1         ...     ...     ...     ...         ...       ...
+    """
+    lines = _tokenize_lines(contents)
+    txt_up = "\n".join(lines).upper()
+
+    # Vehicles and capacity (if present)
+    veh = 1
+    cap = 10**9
+    m = re.search(r"VEHICLE\s+NUMBER\s+CAPACITY\s*\n\s*(\d+)\s+(\d+)", txt_up, re.S)
+    if m:
+        veh = int(m.group(1))
+        cap = int(m.group(2))
+
+    # Find header row index for the table
+    header_idx = None
+    for i, ln in enumerate(lines):
+        up = ln.upper()
+        if ("CUST" in up and "XCOORD" in up and "YCOORD" in up and "DEMAND" in up):
+            header_idx = i
+            break
+    if header_idx is None:
+        raise ValueError("Solomon: header line not found")
+
+    rows = lines[header_idx+1:]
+    waypoints: List[Dict] = []
+    depot_index = 0
+    ids = []
+
+    for i, ln in enumerate(rows):
+        parts = ln.split()
+        # Expect at least 7 columns (cust, x, y, demand, ready, due, service)
+        if len(parts) < 7:
+            # stop when table ends
+            continue
+        try:
+            cid = int(parts[0])
+            x = float(parts[1]); y = float(parts[2])
+            dem = int(float(parts[3]))
+            ready = int(float(parts[4])); due = int(float(parts[5]))
+            service = int(float(parts[6]))
+        except Exception:
+            # tolerate footer or malformed tail lines
+            continue
+
+        ids.append(cid)
+        waypoints.append({
+            "id": str(cid),
+            # keep planar convention x->lat, y->lon (as your xml loader does)
+            "lat": x, "lon": y,
+            "demand": dem,
+            "service_time": service,
+            "time_window": [ready, due],
+            "depot": False,   # set below
+        })
+
+    # Depot: Solomon usually uses customer 1 as depot
+    if waypoints:
+        # depot is the first row (cid == 1)
+        for idx, wp in enumerate(waypoints):
+            if wp["id"] == "1":
+                wp["depot"] = True
+                depot_index = idx
+                break
+
+    vehicles = [{
+        "id": f"veh-{i+1}",
+        "start": depot_index,
+        "end": depot_index,
+        "capacity": [int(cap)],
+        "skills": [],
+        "time_window": None,
+        "max_distance": None,
+        "max_duration": None,
+        "speed": None,
+        "emissions_per_km": None,
+    } for i in range(max(1, int(veh)))]
+
+    return {
+        "waypoints": waypoints,
+        "fleet": {"vehicles": vehicles},
+        "depot_index": depot_index,
+        "matrix": None,
+        "meta": {
+            "format": "solomon",
+            "vehicle_count": int(veh),
+            "capacity": int(cap),
+        },
+    }
+
+# -------- Main entry for .vrp/.txt (CVRPLIB or Solomon) --------
+
+def load_vrplib(file_path: str | Path, compute_matrix: bool = True) -> Dict[str, any]:
+    """
+    Load CVRPLIB-like (.vrp) or Solomon (.txt) into a dict:
+      { waypoints: [ {id, lat, lon, demand, service_time, time_window, depot}, ... ],
+        fleet: { vehicles: [ {id, start, end, capacity:[c], ...}, ... ] },
+        depot_index: int,
+        matrix: {distances, durations} or None,
+        meta: {...}
+      }
+    """
     p = Path(file_path)
     contents = p.read_text(encoding="utf-8", errors="ignore")
+
+    # If it looks like Solomon, parse that path and return
+    if _is_solomon_text(contents):
+        data = _parse_solomon_text(contents)
+        if compute_matrix and data.get("waypoints"):
+            coords_xy = [(wp["lat"], wp["lon"]) for wp in data["waypoints"]]
+            distances = _build_distance_matrix_xy(coords_xy)
+            durations = [[distances[i][j] for j in range(len(distances))]
+                         for i in range(len(distances))]
+            data["matrix"] = {"distances": distances, "durations": durations}
+        data["meta"]["source"] = str(p)
+        return data
+
+    # Else try CVRPLIB-ish sections
     lines = _tokenize_lines(contents)
     sections = _read_sections(lines)
 
@@ -167,61 +299,53 @@ def load_vrplib(file_path: str | Path, compute_matrix: bool = True) -> VRPInstan
     depot_idx_1based = depots[0] if depots else 1
     depot_index = depot_idx_1based - 1
 
-    waypoints: List[Waypoint] = []
+    # Build waypoints (plain dicts, not Pydantic models)
+    waypoints: List[Dict] = []
     nodes_sorted = sorted(nodes, key=lambda t: t[0])
     for idx1, x, y in nodes_sorted:
-        demand = demands.get(idx1, 0)
+        demand = int(demands.get(idx1, 0))
         tw = time_windows.get(idx1, None)
-        service = service_times.get(idx1, 0)
-        waypoints.append(
-            Waypoint(
-                id=str(idx1),
-                lat=x,   # planar x
-                lon=y,   # planar y
-                demand=demand,
-                service_time=service,
-                time_window=list(tw) if tw else None,
-                depot=(idx1 - 1) == depot_index,
-            )
-        )
+        service = int(service_times.get(idx1, 0))
+        waypoints.append({
+            "id": str(idx1),
+            "lat": float(x),
+            "lon": float(y),
+            "demand": demand,
+            "service_time": service,
+            "time_window": list(tw) if tw else None,
+            "depot": (idx1 - 1) == depot_index,
+        })
 
-    vehicles: List[Vehicle] = []
-    for v_idx in range(vehicles_num):
-        vehicles.append(
-            Vehicle(
-                id=f"veh-{v_idx+1}",
-                start=depot_index,
-                end=depot_index,
-                capacity=[capacity],
-                skills=[],
-                time_window=None,
-                max_distance=None,
-                max_duration=None,
-                speed=None,
-                emissions_per_km=None,
-            )
-        )
-    fleet = Fleet(vehicles=vehicles)
+    vehicles: List[Dict] = [{
+        "id": f"veh-{v_idx+1}",
+        "start": depot_index,
+        "end": depot_index,
+        "capacity": [int(capacity)],
+        "skills": [],
+        "time_window": None,
+        "max_distance": None,
+        "max_duration": None,
+        "speed": None,
+        "emissions_per_km": None,
+    } for v_idx in range(vehicles_num)]
 
-    matrix: Optional[MatrixResult] = None
-    if compute_matrix:
-        coords_xy = [(wp.lat, wp.lon) for wp in waypoints]
+    matrix: Optional[Dict] = None
+    if compute_matrix and waypoints:
+        coords_xy = [(wp["lat"], wp["lon"]) for wp in waypoints]
         distances = _build_distance_matrix_xy(coords_xy)
-        durations = [[distances[i][j] for j in range(len(distances))] for i in range(len(distances))]
-        matrix = MatrixResult(distances=distances, durations=durations)
+        durations = [[distances[i][j] for j in range(len(distances))]
+                     for i in range(len(distances))]
+        matrix = {"distances": distances, "durations": durations}
 
-    meta = {
-        "source": str(p),
-        "type": "solomon" if _is_solomon(contents) else "cvrplib",
-        "vehicles": vehicles_num,
-        "capacity": capacity,
+    return {
+        "waypoints": waypoints,
+        "fleet": {"vehicles": vehicles},
         "depot_index": depot_index,
+        "matrix": matrix,
+        "meta": {
+            "source": str(p),
+            "format": "cvrplib",
+            "vehicle_count": int(vehicles_num),
+            "capacity": int(capacity),
+        },
     }
-
-    return VRPInstance(
-        waypoints=waypoints,
-        fleet=fleet,
-        depot_index=depot_index,
-        matrix=matrix,
-        meta=meta,
-    )

@@ -1,16 +1,18 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from api.adapters_routes import router as api_router
+from api.adapters_routes import router as adapters_routes
 from api.solver_routes import router as solver_router
 from api.data_routes import router as osm_router
 from api.status import router as status_router
+from api.vrplib_routes import router as vrplib_router
+from api.emissions_routes import router as emissions_router
+from api.files_routes import router as files_router
 from core.load_plugins import load_plugins
 from contextlib import asynccontextmanager
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     load_plugins()  # <-- your plugin loading logic
-    print(">>> After load_plugins")
     yield
 
 app = FastAPI(title="VRP Adapter Backend", lifespan=lifespan)
@@ -24,13 +26,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-print(">>> main.py startup")
-
 # Register API routes
-app.include_router(api_router)
+app.include_router(adapters_routes)
 app.include_router(solver_router)
 app.include_router(osm_router)
 app.include_router(status_router)
+app.include_router(vrplib_router)
+app.include_router(emissions_router)
+app.include_router(files_router)
     
 if __name__ == "__main__":
     import uvicorn

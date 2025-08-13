@@ -53,3 +53,6 @@ cache/
 
 # pytest cache
 .pytest_cache/
+
+#pytest Reports
+backend/reports/

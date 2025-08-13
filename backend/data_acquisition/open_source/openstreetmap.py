@@ -4,25 +4,16 @@ from OSMPythonTools.overpass import Overpass, overpassQueryBuilder
 from OSMPythonTools.nominatim import Nominatim
 from OSMPythonTools.element import Element
 
-# --- Config (you can route these through your Settings / env) ---
 DEFAULT_TIMEOUT = 120
 RATE_LIMIT_SLEEP = 1.0  # seconds between calls
 
-# Create singletons with a user-agent
 nominatim = Nominatim()
 overpass = Overpass()
-
-# ---------------------------
-# Helpers
-# ---------------------------
 
 def _sleep():
     time.sleep(RATE_LIMIT_SLEEP)
 
 def city_to_area_id(city: str) -> int:
-    """
-    Resolve a human city name to an OSM areaId suitable for Overpass.
-    """
     _sleep()
     res = nominatim.query(city)
     area_id = res.areaId()
@@ -30,17 +21,34 @@ def city_to_area_id(city: str) -> int:
         raise ValueError(f"Could not resolve areaId for city: {city}")
     return area_id
 
-def query_overpass_raw(
-    query: str,
-    *,
-    timeout: int = DEFAULT_TIMEOUT,
-    date: Optional[str] = None,
-):
-    """
-    Execute a raw Overpass QL query string. Returns Overpass.Result.
-    """
+def query_overpass_raw(query: str, *, timeout: int = DEFAULT_TIMEOUT, date: Optional[str] = None):
     _sleep()
     return overpass.query(query, timeout=timeout, date=date)
+
+def _build_selector(key: str, value: str, regex: bool = False) -> str:
+    """
+    Build the selector part for overpassQueryBuilder.
+    - equality: "key"="value"
+    - regex:    "key"~"pattern"
+    - existence (value == "*"): "key"
+    Also supports passing value starting with '~' (e.g. '~restaurant|cafe').
+    """
+    if value == "*":
+        return f'"{key}"'
+    if regex or value.startswith("~"):
+        pattern = value[1:] if value.startswith("~") else value
+        pattern = pattern.strip('"')
+        return f'"{key}"~"{pattern}"'
+    return f'"{key}"="{value}"'
+
+def _normalize_key_value(key: str, value: str) -> tuple[str, str]:
+    """
+    Opinionated tweaks to reduce 'empty' results caused by common tag misunderstandings.
+    """
+    # Map amenity=bus_stop -> highway=bus_stop
+    if key == "amenity" and value == "bus_stop":
+        return "highway", "bus_stop"
+    return key, value
 
 def build_query_nodes_by_tag(
     *,
@@ -49,19 +57,19 @@ def build_query_nodes_by_tag(
     key: str,
     value: str,
     out: str = "body",
+    regex: bool = False,
 ):
-    """
-    Build a query for nodes with a given key=value within area or bbox.
-    Exactly one of area_id or bbox must be provided.
-    """
     if (area_id is None) == (bbox is None):
         raise ValueError("Provide exactly one of area_id or bbox.")
+
+    key, value = _normalize_key_value(key, value)
+    selector = _build_selector(key, value, regex=regex)
 
     return overpassQueryBuilder(
         area=area_id,
         bbox=bbox,
         elementType="node",
-        selector=f'"{key}"="{value}"',
+        selector=selector,
         out=out,
     )
 
@@ -72,49 +80,96 @@ def fetch_nodes_by_tag(
     key: str,
     value: str,
     timeout: int = DEFAULT_TIMEOUT,
+    regex: bool = False,
 ) -> List[Element]:
-    """
-    Fetch nodes with key=value using Overpass.
-    """
-    query = build_query_nodes_by_tag(area_id=area_id, bbox=bbox, key=key, value=value)
+    query = build_query_nodes_by_tag(area_id=area_id, bbox=bbox, key=key, value=value, regex=regex)
     res = query_overpass_raw(query, timeout=timeout)
     return res.elements()
 
 def elements_to_geojson_features(elements: Iterable[Element]) -> List[Dict[str, Any]]:
-    """
-    Convert OSM Elements to GeoJSON Point Features (skip those without lat/lon).
-    """
     features: List[Dict[str, Any]] = []
     for el in elements:
         lat = el.lat()
         lon = el.lon()
         if lat is None or lon is None:
             continue
-        features.append(
-            {
-                "type": "Feature",
-                "geometry": {"type": "Point", "coordinates": [float(lon), float(lat)]},
-                "properties": el.tags() or {},
-            }
-        )
+        features.append({
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [float(lon), float(lat)]},
+            "properties": el.tags() or {},
+        })
     return features
 
 def feature_collection(features: List[Dict[str, Any]]) -> Dict[str, Any]:
     return {"type": "FeatureCollection", "features": features}
 
-# ---------------------------
-# Public convenience functions
-# ---------------------------
-
 def nodes_by_tag_in_bbox(
     bbox: Tuple[float, float, float, float],
     key: str,
     value: str,
+    *,
+    regex: bool = False,
+    timeout: int = DEFAULT_TIMEOUT,
+) -> Dict[str, Any]:
+    elements = fetch_nodes_by_tag(bbox=bbox, key=key, value=value, regex=regex, timeout=timeout)
+    return feature_collection(elements_to_geojson_features(elements))
+
+# Optional: by-place helpers
+
+def nodes_by_tag_in_place(
+    place: str,
+    key: str,
+    value: str,
+    *,
+    regex: bool = False,
+    timeout: int = DEFAULT_TIMEOUT,
+) -> Dict[str, Any]:
+    area_id = city_to_area_id(place)
+    elements = fetch_nodes_by_tag(area_id=area_id, key=key, value=value, regex=regex, timeout=timeout)
+    return feature_collection(elements_to_geojson_features(elements))
+
+def pois_by_tag_in_place(
+    place: str,
+    key: str,
+    value: str,
+    *,
+    include_ways: bool = True,
+    include_relations: bool = True,
+    regex: bool = False,
+    timeout: int = DEFAULT_TIMEOUT,
 ) -> Dict[str, Any]:
     """
-    Fetch nodes by tag in a bounding box and return GeoJSON.
-    bbox = (south, west, north, east)
+    Fetch nodes (always) and optionally way/relations (as centroids) for a place.
     """
-    elements = fetch_nodes_by_tag(bbox=bbox, key=key, value=value)
-    feats = elements_to_geojson_features(elements)
+    area_id = city_to_area_id(place)
+
+    # Build raw QL because overpassQueryBuilder is limited for union queries
+    selector = _build_selector(*_normalize_key_value(key, value), regex=regex)
+    area_clause = f"area:{area_id}"
+
+    parts = [f'node[{selector}]({area_clause});']
+    if include_ways:
+        parts.append(f'way[{selector}]({area_clause});')
+    if include_relations:
+        parts.append(f'relation[{selector}]({area_clause});')
+
+    ql = f"""
+[out:json][timeout:{timeout}];
+(
+  {"".join(parts)}
+);
+out center tags;
+"""
+    res = query_overpass_raw(ql, timeout=timeout)
+    feats: List[Dict[str, Any]] = []
+    for el in res.elements():
+        lat = el.lat() or el.centerLat()
+        lon = el.lon() or el.centerLon()
+        if lat is None or lon is None:
+            continue
+        feats.append({
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [float(lon), float(lat)]},
+            "properties": el.tags() or {},
+        })
     return feature_collection(feats)

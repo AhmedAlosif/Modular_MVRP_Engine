@@ -1,22 +1,33 @@
 # api/adapters_routes.py
-from __future__ import annotations
 from fastapi import APIRouter, HTTPException
-from core.adapter_factory_registry import AdapterFactoryRegistry
-from core.exceptions import DistanceMatrixRequestError
+from adapters.adapter_factory import create_adapter
 from models.distance_matrix import MatrixRequest, MatrixResult
+import asyncio
 
-router = APIRouter(prefix="/distance-matrix", tags=["distance-matrix"])
+router = APIRouter()
 
-@router.post("")
+@router.post("/distance-matrix", summary="Compute a distance/duration matrix via adapter")
 async def get_distance_matrix(req: MatrixRequest):
     try:
-        adapter = AdapterFactoryRegistry.get(req.adapter)
-        result: MatrixResult = await adapter.get_matrix(req)
-        # Unified, simple response (no legacy success_response/error_response)
-        return {"status": "success", "message": "OK", "data": {"matrix": result.model_dump()}}
-    except DistanceMatrixRequestError as e:
-        raise HTTPException(status_code=400, detail={"status": "error", "message": "Matrix failed", "details": str(e)})
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail={"status": "error", "message": "Adapter not found", "details": str(e)})
+        adapter = create_adapter(req.adapter)
+
+        # Call adapter (works whether get_matrix is async or sync)
+        result = adapter.get_matrix(req)
+        if asyncio.iscoroutine(result):
+            result = await result
+
+        # Normalize to MatrixResult for consistent serialization
+        if not isinstance(result, MatrixResult):
+            result = MatrixResult(**result)
+
+        # Return plain dict to avoid pydantic trying to serialize exotic types
+        return {
+            "status": "success",
+            "data": {"matrix": result.model_dump()}
+        }
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail={"status": "error", "message": "Internal error", "details": str(e)})
+        raise HTTPException(
+            status_code=500,
+            detail={"status": "error", "message": f"Internal server error: {e}"}
+        )

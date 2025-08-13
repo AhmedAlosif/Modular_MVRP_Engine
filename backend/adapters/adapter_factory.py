@@ -1,3 +1,4 @@
+# adapters/adapter_factory.py
 from core.adapter_factory_registry import AdapterFactoryRegistry
 from core.interfaces import DistanceMatrixAdapter
 
