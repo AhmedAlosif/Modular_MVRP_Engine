@@ -1,0 +1,14 @@
+fastapi
+httpx
+ortools
+osmpythontools
+pandas
+pydantic
+pyomo
+pytest
+python-dotenv
+pyvroom
+starlette
+uvicorn
+vroom
+vrplib
