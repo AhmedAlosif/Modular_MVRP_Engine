@@ -16,6 +16,8 @@ import CustomDatasetPanel from "@/components/data/CustomDatasetPanel";
 import ResultSummaryPanel from "@/components/vrp/ResultSummaryPanel";
 import DataManagerPanel from "@/components/datasets/DataManagerPanel";
 import WeightTunerPanel from "@/components/vrp/WeightTunerPanel";
+import SolveButton from "@/components/SolveButton";
+
 
 const API_KEY = process.env.NEXT_PUBLIC_LOCATIONIQ_API_KEY;
 
@@ -154,6 +156,11 @@ export default function Sidebar({ }) {
 
         {/* 📊 Summary */}
         <ResultSummaryPanel />
+
+        {/*Test*/}
+        <Section>
+          <SolveButton/>
+        </Section>
       </div>
     </div>
   );

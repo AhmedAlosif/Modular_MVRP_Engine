@@ -1,13 +1,14 @@
 'use client';
 import { useCallback, useMemo } from "react";
 import { DeckGL } from "@deck.gl/react";
-import { ScatterplotLayer, GeoJsonLayer } from "@deck.gl/layers";
+import { ScatterplotLayer, GeoJsonLayer, PathLayer } from "@deck.gl/layers";
 import Map from 'react-map-gl/maplibre';
 import maplibregl from "maplibre-gl";
 import useMapStore from "@/hooks/useMapStore";
 import useVrpStore from "@/hooks/useVRPStore";
 import useWaypointStore from "@/hooks/useWaypointStore";
 import useUiStore from "@/hooks/useUIStore";
+import useRouteStore from '@/hooks/useRouteStore';
 
 const MAP_STYLE = "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json";
 
@@ -36,6 +37,39 @@ export default function MapLibreComponent() {
     clearHoveredFeature,
     addOnClickEnabled,
   } = useUiStore();
+
+  const routes = useRouteStore(s => s.routes);
+
+  const routeLayers = useMemo(() => {
+    if (!Array.isArray(routes) || routes.length === 0) return [];
+
+    const palette = [
+      [230, 57, 70],   // red-ish
+      [42, 157, 143],  // teal
+      [38, 70, 83],    // dark teal
+      [233, 196, 106], // yellow
+      [29, 53, 87],    // blue
+    ];
+
+    return routes.map((r, idx) => {
+      const color = palette[idx % palette.length];
+
+      // PathLayer wants an array; simplest: each datum is the full path
+      return new PathLayer({
+        id: `route-path-${idx}`,
+        data: [r.coords],              // << [ [lng,lat], [lng,lat], ... ]
+        getPath: d => d,
+        getColor: color,
+        widthUnits: 'pixels',
+        getWidth: () => 4,
+        pickable: true,                // optional, for clicks/hover
+        parameters: { depthTest: false }, // keep on top
+        updateTriggers: {
+          getPath: r.coords
+        }
+      });
+    });
+  }, [routes]);
 
   const handleMapClick = useCallback((info) => {
     if (!info?.object) {
@@ -133,6 +167,14 @@ export default function MapLibreComponent() {
       }));
   }, [GeojsonFiles]);
 
+  const allLayers = useMemo(() => {
+    const L = [];
+    if (waypointLayer) L.push(waypointLayer);
+    L.push(...layers);       // your geojson layers
+    L.push(...routeLayers);  // your path layers (routes) on top
+    return L;
+  }, [waypointLayer, layers, routeLayers]);
+
   return (
     <>
       <DeckGL
@@ -144,7 +186,7 @@ export default function MapLibreComponent() {
           clearHoveredWaypoint();    // Dismiss waypoint hover
         }}
         onClick={handleMapClick}
-        layers={[waypointLayer, layers].filter(Boolean)}
+        layers={allLayers}
         style={{ position: "absolute", top: 0, bottom: 0, width: "100%" }}
       >
         <Map
