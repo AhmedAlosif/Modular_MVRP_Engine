@@ -25,9 +25,9 @@ def get_settings():
 class Settings:
     DATA_DIR = "./backend/data"
     BENCHMARK_INCLUDE_FOLDERS = ["solomon", "vrp-set-xml100"]  # optional allow-list
-    BENCHMARK_EXCLUDE_FOLDERS = [] 
+    BENCHMARK_EXCLUDE_FOLDERS = ["custom_data"] 
     GOOGLE_API_KEY: str = os.getenv("GOOGLE_API_KEY", "")
     ORS_API_KEY: str = os.getenv("ORS_API_KEY", "")
     USE_OFFLINE_MATRIX: bool = os.getenv("USE_OFFLINE_MATRIX", "false").lower() == "true"
-
+    CUSTOM_DATA_DIR: str = str(Path(__file__).resolve().parent / "data" / "custom_data")
 settings = Settings

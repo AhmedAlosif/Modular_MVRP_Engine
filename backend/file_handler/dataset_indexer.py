@@ -8,7 +8,7 @@ import os
 # If you leave this nonempty, it can hide datasets during tests.
 # Make it empty to include all subfolders except the explicit excludes.
 BENCHMARK_INCLUDE_FOLDERS: set[str] = set()
-BENCHMARK_EXCLUDE_FOLDERS = {"custom_examples", "real_world", "test_files"}
+BENCHMARK_EXCLUDE_FOLDERS = {"custom_examples", "real_world", "test_files", "custom_data"}
 
 INSTANCE_EXTS = {".vrp", ".xml", ".txt"}
 SOLUTION_EXTS = {".sol", ".xml", ".txt"}

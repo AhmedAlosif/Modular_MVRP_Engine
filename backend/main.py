@@ -7,6 +7,7 @@ from api.status import router as status_router
 from api.vrplib_routes import router as vrplib_router
 from api.emissions_routes import router as emissions_router
 from api.files_routes import router as files_router
+from api.capabilities_routes import router as capabilities_router
 from core.load_plugins import load_plugins
 from contextlib import asynccontextmanager
 
@@ -34,7 +35,8 @@ app.include_router(status_router)
 app.include_router(vrplib_router)
 app.include_router(emissions_router)
 app.include_router(files_router)
-    
+app.include_router(capabilities_router)
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)

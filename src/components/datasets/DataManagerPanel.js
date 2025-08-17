@@ -56,7 +56,7 @@ export default function DataManagerPanel() {
     };
 
     return (
-        <Section title="📁 Data Manager">
+        <Section title="📁 Data Manager (Local)">
             <Section title="⬆️ Import Options">
                 <div className="text-xs space-y-1">
                     <label>
@@ -131,12 +131,6 @@ export default function DataManagerPanel() {
                 >
                     💾 Export Selected
                 </button>
-            </Section>
-
-            <Section title="🔄 Sync (Future)">
-                <div className="text-xs text-gray-400">
-                    Integration with backend coming soon (load/save)
-                </div>
             </Section>
         </Section>
     );

@@ -9,6 +9,7 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@deck.gl-community/editable-layers": "^9.1.1",
     "@deck.gl/layers": "^9.1.13",
     "@deck.gl/react": "^9.1.13",
     "@headlessui/react": "^2.2.6",

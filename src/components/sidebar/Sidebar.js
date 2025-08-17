@@ -3,20 +3,18 @@ import { useState } from "react";
 import { ChevronLeftIcon, ChevronRightIcon } from "@heroicons/react/24/solid";
 import Section from "@/components/sidebar/Section";
 import useWaypointStore from "@/hooks/useWaypointStore";
-import FileUpload from "@/components/data/FileUpload";
 import WaypointSidebar from "@/components/vrp/WaypointSidebar";
 import FleetConfigSidebar from "@/components/vrp/FleetConfigSidebar";
 import SidebarSearchBox from "@/components/sidebar/SidebarSearchBox";
 import useVrpStore from "@/hooks/useVRPStore";
 import useMapStore from "@/hooks/useMapStore";
-import ExportGeoJSON from "@/components/data/ExportGeoJSON";
 import BenchmarkSelector from "@/components/datasets/BenchmarkSelector";
 import RealWorldDatasetPanel from "@/components/datasets/RealWorldDatasetPanel";
 import CustomDatasetPanel from "@/components/data/CustomDatasetPanel";
 import ResultSummaryPanel from "@/components/vrp/ResultSummaryPanel";
 import DataManagerPanel from "@/components/datasets/DataManagerPanel";
 import WeightTunerPanel from "@/components/vrp/WeightTunerPanel";
-import SolveButton from "@/components/SolveButton";
+import SolverPanel from "@/components/vrp/SolverPanel";
 
 
 const API_KEY = process.env.NEXT_PUBLIC_LOCATIONIQ_API_KEY;
@@ -27,18 +25,6 @@ export default function Sidebar({ }) {
   const {
     addWaypoint,
   } = useWaypointStore();
-
-  const {
-    GeojsonFiles,
-    toggleFileVisibility,
-    removeGeojsonFile,
-    zoomToFile,
-    setGeojsonFiles,
-  } = useVrpStore();
-
-  const {
-    setViewState,
-  } = useMapStore();
 
   return (
     <div
@@ -75,34 +61,6 @@ export default function Sidebar({ }) {
           <SidebarSearchBox apiKey={API_KEY} onWaypoint={addWaypoint} />
         </Section>
 
-        {/* 📂 Data Manager (old) */}
-        <Section title="📂 Data Manager (old)">
-          {/* 📂 GeoJSON Upload */}
-          <Section title="📂 Import GeoJSON">
-            <FileUpload onImport={(data) => {
-              setGeojsonFiles(data);
-            }} />
-            {GeojsonFiles.map(file => (
-              <div key={file.id} className="p-2 border rounded mb-1">
-                <div className="font-medium">{file.name}</div>
-                <div className="flex space-x-2 mt-1">
-                  <button onClick={() => toggleFileVisibility(file.id)}>👁 {file.visible ? 'Hide' : 'Show'}</button>
-                  <button onClick={() => removeGeojsonFile(file.id)}>🗑 Remove</button>
-                  <button onClick={() => zoomToFile(file.name, setViewState)}>🎯 Zoom</button>
-                </div>
-              </div>
-            ))}
-          </Section>
-          {/* 📥 Import VRP */}
-          <Section title="📥 Import VRP">
-            <input type="file" accept=".json" className="text-sm" />
-          </Section>
-          {/* 📤 Export */}
-          <Section title="📤 Export GeoJSON">
-            <ExportGeoJSON />
-          </Section>
-        </Section>
-
         {/* 📂 Data Manager */}
         <DataManagerPanel />
 
@@ -113,18 +71,7 @@ export default function Sidebar({ }) {
           {/* 🗺️ Waypoints */}
           <WaypointSidebar />
           {/* 🧠 Solver */}
-          <Section title="🧠 Solver Settings">
-            <select className="w-full px-2 py-1 border rounded-md text-sm dark:bg-gray-700 dark:text-white">
-              <option>OR-Tools</option>
-              <option>VROOM</option>
-              <option>jsprit</option>
-            </select>
-            <input
-              type="number"
-              placeholder="Max stops per vehicle"
-              className="w-full px-2 py-1 border rounded-md text-sm dark:bg-gray-700 dark:text-white"
-            />
-          </Section>
+          <SolverPanel />
         </Section>
 
         {/* 📤 Benchmark Selector */}
@@ -148,19 +95,16 @@ export default function Sidebar({ }) {
         {/* 📤 Real-World Dataset */}
         <RealWorldDatasetPanel />
 
-        {/* 📤 Custom Datasets */
-          <CustomDatasetPanel />}
+        {/* 📤 Custom Datasets (Server) */}
+        <Section title="📤 Custom Datasets (Server)">
+          <CustomDatasetPanel />
+        </Section>
 
-        {/* 📤 Weight Panel */
-          <WeightTunerPanel />}
+        {/* 📤 Weight Panel */}
+          <WeightTunerPanel />
 
         {/* 📊 Summary */}
         <ResultSummaryPanel />
-
-        {/*Test*/}
-        <Section>
-          <SolveButton/>
-        </Section>
       </div>
     </div>
   );

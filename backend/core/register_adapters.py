@@ -1,16 +1,21 @@
 # core/register_adapters.py
 from __future__ import annotations
-
 import os
-from typing import Any
+from typing import Any, Callable
 
 from core.adapter_factory_registry import AdapterFactoryRegistry
 
-# Adapters
+# Offline adapters
 from adapters.offline.haversine_adapter import HaversineAdapter
+from adapters.online.osm_graph_adapter import OsmGraphAdapter  # <-- new
+
+# Online adapters
 from adapters.online.openrouteservice_adapter import ORSDistanceMatrixAdapter
 from adapters.online.google_matrix_adapter import GoogleMatrixAdapter
-from adapters.online.google_routes_adapter import GoogleRoutesAdapter  # if present
+try:
+    from adapters.online.google_routes_adapter import GoogleRoutesAdapter  # optional
+except Exception:
+    GoogleRoutesAdapter = None  # type: ignore
 
 _registered = False
 
@@ -37,31 +42,33 @@ def _load_settings() -> Any | None:
     try:
         from config import Settings  # type: ignore
         try:
-            # pydantic BaseSettings subclass or similar (callable)
-            return Settings()  # type: ignore[call-arg]
+            return Settings()  # pydantic BaseSettings
         except Exception:
-            # legacy static container with class attributes
-            return Settings
+            return Settings     # legacy static container
     except Exception:
         return None
 
 
 def _get_key(settings_obj: Any, attr_name: str, *env_fallbacks: str) -> str | None:
-    """
-    Pull API key from settings object if present; otherwise from env.
-    Supports multiple env names as fallbacks.
-    """
+    """Pull API key from settings object if present; otherwise from env."""
     if settings_obj is not None and hasattr(settings_obj, attr_name):
         val = getattr(settings_obj, attr_name)
         if val:
             return str(val)
-
     for env in env_fallbacks:
         val = os.getenv(env)
         if val:
             return val
-
     return None
+
+
+def _safe_register(name: str, factory: Callable[[], object]) -> None:
+    """Don’t blow up if already registered (idempotent)."""
+    try:
+        AdapterFactoryRegistry.register(name, factory)
+    except Exception:
+        # If your registry raises on duplicates, we just ignore
+        pass
 
 
 def register_adapters() -> None:
@@ -71,30 +78,34 @@ def register_adapters() -> None:
 
     settings_obj = _load_settings()
 
-    # Always register offline adapter
-    AdapterFactoryRegistry.register("haversine", lambda: HaversineAdapter())
+    # -----------------------------
+    # Offline / local adapters
+    # -----------------------------
+    # Debug-only Haversine
+    if os.getenv("ENABLE_HAVERSINE", "0") == "1":
+        _safe_register("haversine", lambda: HaversineAdapter())
 
-    # Resolve API keys (support common alt env names too)
+    # OSM graph (local routing) — on by default
+    if os.getenv("ENABLE_OSM_GRAPH", "1") != "0":
+        # buffer (m) and network type are tunable by env
+        buffer_m = int(os.getenv("OSM_GRAPH_BUFFER_M", "3000"))
+        network_type = os.getenv("OSM_GRAPH_NET", "drive")
+        _safe_register("osm_graph", lambda: OsmGraphAdapter(buffer_m=buffer_m, network_type=network_type))
+
+    # -----------------------------
+    # Online providers
+    # -----------------------------
     ors_key = _get_key(settings_obj, "ORS_API_KEY", "ORS_API_KEY", "OPENROUTESERVICE_API_KEY")
-    google_key = _get_key(settings_obj, "GOOGLE_API_KEY", "GOOGLE_API_KEY")
-    google_routes_key = _get_key(settings_obj, "GOOGLE_ROUTES_API_KEY", "GOOGLE_ROUTES_API_KEY")
-
     if ors_key:
-        AdapterFactoryRegistry.register(
-            "openrouteservice",
-            lambda k=ors_key: ORSDistanceMatrixAdapter(api_key=k),
-        )
+        _safe_register("openrouteservice", lambda k=ors_key: ORSDistanceMatrixAdapter(api_key=k))
 
+    google_key = _get_key(settings_obj, "GOOGLE_API_KEY", "GOOGLE_API_KEY")
     if google_key:
-        AdapterFactoryRegistry.register(
-            "google",
-            lambda k=google_key: GoogleMatrixAdapter(api_key=k),
-        )
+        _safe_register("google", lambda k=google_key: GoogleMatrixAdapter(api_key=k))
 
-    if google_routes_key:
-        AdapterFactoryRegistry.register(
-            "google_routes",
-            lambda k=google_routes_key: GoogleRoutesAdapter(api_key=k),
-        )
+    if GoogleRoutesAdapter is not None:
+        google_routes_key = _get_key(settings_obj, "GOOGLE_ROUTES_API_KEY", "GOOGLE_ROUTES_API_KEY")
+        if google_routes_key:
+            _safe_register("google_routes", lambda k=google_routes_key: GoogleRoutesAdapter(api_key=k))
 
     _registered = True
