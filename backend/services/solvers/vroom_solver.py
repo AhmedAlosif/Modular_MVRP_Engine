@@ -135,7 +135,6 @@ class VroomSolver(VRPSolver):
 
         # ---- No pyvroom? fallback NN on our matrix (single consolidated route) ----
         if not _HAS_VROOM:
-            # Make one heuristic route that visits everything; assign it to the first vehicle
             path = _nn_path(matrix.distances, depot)
             td, tt, em = _route_totals(path, matrix, getattr(vehicles[0], "emissions_per_km", None))
             return Routes(
@@ -177,8 +176,15 @@ class VroomSolver(VRPSolver):
                     # convert to (lat, lon)
                     coords_latlon = [(float(c[1]), float(c[0])) for c in coords]  # if matrix uses [lon,lat]
                 else:
-                    raise SolverRequestError(
-                        "pyvroom Job requires 'location' but no coordinates were available."
+                    # --- fallback to NN when coords unavailable on coord-only pyvroom builds ---
+                    path = _nn_path(matrix.distances, depot)
+                    td, tt, em = _route_totals(path, matrix, getattr(vehicles[0], "emissions_per_km", None))
+                    return Routes(
+                        status="success",
+                        message="pyvroom requires coordinates but none provided; fallback NN used",
+                        routes=[Route(vehicle_id=str(vehicles[0].id),
+                                      waypoint_ids=[str(i) for i in path],
+                                      total_distance=td, total_duration=tt, emissions=em)]
                     )
 
             # ---- Vehicles ----
@@ -191,7 +197,16 @@ class VroomSolver(VRPSolver):
                 if coord_mode:
                     # Vehicles expect coordinates
                     if coords_latlon is None:
-                        raise SolverRequestError("Coordinate mode requires waypoint coordinates.")
+                        # safety net; should not happen due to fallback above
+                        path = _nn_path(matrix.distances, depot)
+                        td, tt, em = _route_totals(path, matrix, getattr(vehicles[0], "emissions_per_km", None))
+                        return Routes(
+                            status="success",
+                            message="pyvroom coordinate mode lacked coords; fallback NN used",
+                            routes=[Route(vehicle_id=str(vehicles[0].id),
+                                          waypoint_ids=[str(i) for i in path],
+                                          total_distance=td, total_duration=tt, emissions=em)]
+                        )
                     # vroom expects [lon, lat] order
                     start_ll = coords_latlon[start_idx]
                     end_ll = coords_latlon[end_idx]
@@ -276,14 +291,9 @@ class VroomSolver(VRPSolver):
             # ---- Extract per-vehicle routes ----
             out_routes: List[Route] = []
             for r in sol.routes:
-                # route vehicle index; fallback to index order
                 k = getattr(r, "vehicle", None)
                 veh_id = str(vehicles[k].id) if isinstance(k, int) and 0 <= k < len(vehicles) else str(vehicles[0].id)
 
-                # Start at its start, then accumulate step indices, then ensure end
-                # Steps may expose location_index, job, or location (impl dependent)
-                # We’ll build a path of node indices consistent with our matrix ordering.
-                # If coord_mode, steps’ location is coords; here we prefer job/location_index.
                 path: List[int] = []
                 start_idx = int(getattr(vehicles[k], "start", depot) if isinstance(k, int) else depot)
                 end_idx = int(getattr(vehicles[k], "end", depot) if isinstance(k, int) else depot)

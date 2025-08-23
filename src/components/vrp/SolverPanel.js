@@ -67,7 +67,7 @@ export default function SolverPanel() {
                 value={solverEngine}
                 onChange={(e) => setSolverEngine(e.target.value)}
             >
-                {(caps?.solvers?.map(s => s.name) ?? ['ortools', 'pyomo', 'vroom']).map(n =>
+                {(caps?.solvers?.map(s => s.name) ?? ['ortools', 'pyomo', 'vroom', 'Mapbox']).map(n =>
                     <option key={n} value={n}>{n}</option>
                 )}
             </select>

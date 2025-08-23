@@ -8,6 +8,7 @@ from api.vrplib_routes import router as vrplib_router
 from api.emissions_routes import router as emissions_router
 from api.files_routes import router as files_router
 from api.capabilities_routes import router as capabilities_router
+from api.mapbox_routes import router as mapbox_router
 from core.load_plugins import load_plugins
 from contextlib import asynccontextmanager
 
@@ -36,6 +37,7 @@ app.include_router(vrplib_router)
 app.include_router(emissions_router)
 app.include_router(files_router)
 app.include_router(capabilities_router)
+app.include_router(mapbox_router)
 
 if __name__ == "__main__":
     import uvicorn

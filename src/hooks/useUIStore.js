@@ -14,6 +14,22 @@ const useUiStore = create((set) => ({
   drawBBoxEnabled: false,
   lastBbox: null, // { minLon, minLat, maxLon, maxLat }
 
+  trafficEnabled: false,
+  setTrafficEnabled: (v) => set({ trafficEnabled: !!v }),
+
+  tripsEnabled: false,
+  setTripsEnabled: (v) => set({ tripsEnabled: !!v }),
+
+  etasEnabled: false,
+  etaEveryMeters: 600,
+  etaSpeedKmh: 40,
+  setEtasEnabled: (v) => set({ etasEnabled: !!v }),
+  setEtaConfig: (p) => set(s => ({ ...s, ...p })),
+
+  transformPreview: null,                // {coords, color?}
+  setTransformPreview: (payload) => set({ transformPreview: payload }),
+  clearTransformPreview: () => set({ transformPreview: null }),
+
   setSolverEngine: (v) => set({ solverEngine: v }),
   setRoutingAdapter: (v) => set({ routingAdapter: v }),
   setVrpType: (v) => set({ vrpType: v }),

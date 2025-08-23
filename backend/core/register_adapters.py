@@ -12,6 +12,7 @@ from adapters.online.osm_graph_adapter import OsmGraphAdapter  # <-- new
 # Online adapters
 from adapters.online.openrouteservice_adapter import ORSDistanceMatrixAdapter
 from adapters.online.google_matrix_adapter import GoogleMatrixAdapter
+from adapters.online.mapbox_matrix_adapter import MapboxMatrixAdapter
 try:
     from adapters.online.google_routes_adapter import GoogleRoutesAdapter  # optional
 except Exception:
@@ -95,6 +96,10 @@ def register_adapters() -> None:
     # -----------------------------
     # Online providers
     # -----------------------------
+    mapbox_key = _get_key(settings_obj, "MAPBOX_TOKEN", "MAPBOX_TOKEN")
+    if mapbox_key:
+        _safe_register("mapbox",lambda k=mapbox_key: MapboxMatrixAdapter(api_key=k))
+
     ors_key = _get_key(settings_obj, "ORS_API_KEY", "ORS_API_KEY", "OPENROUTESERVICE_API_KEY")
     if ors_key:
         _safe_register("openrouteservice", lambda k=ors_key: ORSDistanceMatrixAdapter(api_key=k))

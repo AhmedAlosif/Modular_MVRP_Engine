@@ -30,4 +30,6 @@ class Settings:
     ORS_API_KEY: str = os.getenv("ORS_API_KEY", "")
     USE_OFFLINE_MATRIX: bool = os.getenv("USE_OFFLINE_MATRIX", "false").lower() == "true"
     CUSTOM_DATA_DIR: str = str(Path(__file__).resolve().parent / "data" / "custom_data")
+    MAPBOX_TOKEN: str = os.getenv("MAPBOX_TOKEN", "")
+    HTTP_TIMEOUT_S: float = float(os.getenv("HTTP_TIMEOUT_S", "15.0"))
 settings = Settings

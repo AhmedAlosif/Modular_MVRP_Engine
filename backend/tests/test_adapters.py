@@ -1,6 +1,4 @@
 # backend/tests/test_adapters.py
-import math
-import os
 import pytest
 
 

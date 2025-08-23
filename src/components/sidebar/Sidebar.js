@@ -6,8 +6,6 @@ import useWaypointStore from "@/hooks/useWaypointStore";
 import WaypointSidebar from "@/components/vrp/WaypointSidebar";
 import FleetConfigSidebar from "@/components/vrp/FleetConfigSidebar";
 import SidebarSearchBox from "@/components/sidebar/SidebarSearchBox";
-import useVrpStore from "@/hooks/useVRPStore";
-import useMapStore from "@/hooks/useMapStore";
 import BenchmarkSelector from "@/components/datasets/BenchmarkSelector";
 import RealWorldDatasetPanel from "@/components/datasets/RealWorldDatasetPanel";
 import CustomDatasetPanel from "@/components/data/CustomDatasetPanel";
@@ -15,7 +13,7 @@ import ResultSummaryPanel from "@/components/vrp/ResultSummaryPanel";
 import DataManagerPanel from "@/components/datasets/DataManagerPanel";
 import WeightTunerPanel from "@/components/vrp/WeightTunerPanel";
 import SolverPanel from "@/components/vrp/SolverPanel";
-
+import RouteToolsPanel from '@/components/sidebar/RouteToolsPanel';
 
 const API_KEY = process.env.NEXT_PUBLIC_LOCATIONIQ_API_KEY;
 
@@ -101,8 +99,10 @@ export default function Sidebar({ }) {
         </Section>
 
         {/* 📤 Weight Panel */}
-          <WeightTunerPanel />
+        <WeightTunerPanel />
 
+        {/* 📤 Route Tools */}
+        <RouteToolsPanel />
         {/* 📊 Summary */}
         <ResultSummaryPanel />
       </div>

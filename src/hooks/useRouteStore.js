@@ -4,6 +4,24 @@ import { create } from 'zustand';
 
 const clamp = (i, n) => Math.max(0, Math.min(Math.max(0, n - 1), i));
 
+// NEW: tolerate multiple backend/test response shapes
+function extractRoutes(res) {
+  if (!res) return [];
+  if (Array.isArray(res)) return res;
+
+  const candidates = [
+    res.data?.routes,
+    res.routes,
+    res.result?.routes,
+    res.data?.data?.routes,
+    res.payload?.routes
+  ];
+  for (const r of candidates) {
+    if (Array.isArray(r) && r.length) return r;
+  }
+  return [];
+}
+
 const useRouteStore = create((set, get) => ({
   routes: [],        // [{ coords, totalDistance, totalDuration, emissions, meta:{solver,adapter,vrpType,id}, raw }]
   summary: null,     // { label, totalDistance, totalDuration, vehiclesUsed, routeCount }
@@ -21,11 +39,11 @@ const useRouteStore = create((set, get) => ({
     if (!routes.length) return;
     const idx = clamp(i, routes.length);
     const nextRoutes = routes.filter((_, k) => k !== idx);
-    const nextIndex  = clamp(idx, nextRoutes.length);
+    const nextIndex = clamp(idx, nextRoutes.length);
 
     const totalDistance = nextRoutes.reduce((s, r) => s + (r.totalDistance || 0), 0);
     const totalDuration = nextRoutes.reduce((s, r) => s + (r.totalDuration || 0), 0);
-    const vehiclesUsed  = nextRoutes.filter(r => (r.coords?.length ?? 0) > 1).length || nextRoutes.length;
+    const vehiclesUsed = nextRoutes.filter(r => (r.coords?.length ?? 0) > 1).length || nextRoutes.length;
     const summary = nextRoutes.length
       ? { label: 'Best Route', totalDistance, totalDuration, vehiclesUsed, routeCount: nextRoutes.length }
       : null;
@@ -35,23 +53,36 @@ const useRouteStore = create((set, get) => ({
 
   /** Append a solver result and recompute summary */
   addSolutionFromSolver: (solveRes, waypoints = [], meta = {}) => {
-    const routesRaw = solveRes?.data?.routes ?? solveRes?.routes ?? [];
-    if (!Array.isArray(routesRaw) || routesRaw.length === 0) return;
+    // OLD:
+    // const routesRaw = solveRes?.data?.routes ?? solveRes?.routes ?? [];
+    // if (!Array.isArray(routesRaw) || routesRaw.length === 0) return;
+
+    // NEW: accept more shapes
+    const routesRaw = extractRoutes(solveRes);
+    if (!Array.isArray(routesRaw) || routesRaw.length === 0) {
+      console.warn('[routeStore] addSolutionFromSolver: no routes in solveRes shape', solveRes);
+      return;
+    }
 
     // Build lookup: id -> coords, idx -> coords
     const idToCoord = new Map();
     const idxToCoord = new Map();
     waypoints.forEach((wp, idx) => {
       if (Array.isArray(wp.coordinates)) {
-        idToCoord.set(String(wp.id), wp.coordinates);
+        if (wp.id != null) idToCoord.set(String(wp.id), wp.coordinates);
         idxToCoord.set(idx, wp.coordinates);
       }
     });
 
     const normalized = routesRaw.map((r, ri) => {
-      const ids = Array.isArray(r.waypoint_ids) ? r.waypoint_ids : [];
+      // accept both waypoint_ids and waypointIds
+      const ids = Array.isArray(r.waypoint_ids) ? r.waypoint_ids
+        : Array.isArray(r.waypointIds) ? r.waypointIds
+          : [];
+
       const coords = ids.map(idOrIdx => {
-        if (idToCoord.has(String(idOrIdx))) return idToCoord.get(String(idOrIdx));
+        const k = String(idOrIdx);
+        if (idToCoord.has(k)) return idToCoord.get(k);
         const asNum = Number(idOrIdx);
         if (Number.isFinite(asNum) && idxToCoord.has(asNum)) return idxToCoord.get(asNum);
         return null;
@@ -59,18 +90,18 @@ const useRouteStore = create((set, get) => ({
 
       return {
         index: ri,
-        vehicleId: r.vehicle_id ?? `veh-${ri + 1}`,
+        vehicleId: r.vehicle_id ?? r.vehicleId ?? `veh-${ri + 1}`,
         waypointIds: ids,
         coords,
-        totalDistance: Number(r.total_distance ?? 0),
-        totalDuration: Number(r.total_duration ?? 0),
+        totalDistance: Number(r.total_distance ?? r.totalDistance ?? 0),
+        totalDuration: Number(r.total_duration ?? r.totalDuration ?? 0),
         emissions: Number(r.emissions ?? 0),
         raw: r,
         meta: {
-          solver:  meta.solver  ?? 'unknown',
+          solver: meta.solver ?? 'unknown',
           adapter: meta.adapter ?? 'unknown',
           vrpType: meta.vrpType ?? 'unknown',
-          id:      meta.id      ?? `run-${Date.now()}-${ri}`
+          id: meta.id ?? `run-${Date.now()}-${ri}`
         }
       };
     });
@@ -78,7 +109,7 @@ const useRouteStore = create((set, get) => ({
     const merged = [...get().routes, ...normalized];
     const totalDistance = merged.reduce((s, r) => s + (r.totalDistance || 0), 0);
     const totalDuration = merged.reduce((s, r) => s + (r.totalDuration || 0), 0);
-    const vehiclesUsed  = merged.filter(r => (r.coords?.length ?? 0) > 1).length || merged.length;
+    const vehiclesUsed = merged.filter(r => (r.coords?.length ?? 0) > 1).length || merged.length;
     const summary = { label: 'Best Route', totalDistance, totalDuration, vehiclesUsed, routeCount: merged.length };
 
     set({ routes: merged, summary, currentIndex: merged.length - 1 });

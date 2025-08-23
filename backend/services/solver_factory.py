@@ -21,6 +21,9 @@ def get_solver(name: str) -> VRPSolver:
     return _solver_registry[key]()
 
 def list_solvers() -> List[str]:
+    # <—— ensure the built-ins are registered before listing
+    if not _solver_registry:
+        register_solvers()
     return sorted(_solver_registry.keys())
 
 def register_solvers() -> None:

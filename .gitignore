@@ -56,3 +56,6 @@ cache/
 
 #pytest Reports
 backend/reports/
+
+# Frontend test results
+test-results/

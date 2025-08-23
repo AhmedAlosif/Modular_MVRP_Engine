@@ -1,7 +1,7 @@
 from __future__ import annotations
-from typing import List, Optional, Union
-from pydantic import BaseModel, Field
-from models.distance_matrix import MatrixResult  # <- important: solver consumes a MatrixResult
+from typing import List, Optional, Union, Any, Tuple
+from pydantic import BaseModel, Field, field_validator
+from models.distance_matrix import MatrixResult  # solver consumes a MatrixResult
 from models.fleet import Vehicle, Fleet
 from models.waypoints import Waypoint
 
@@ -32,7 +32,7 @@ class ObjectiveWeights(BaseModel):
 class SolveRequest(BaseModel):
     # For /solver/solve: the matrix must already be computed
     solver: str
-    matrix: Optional[MatrixResult] = None                       # <— was Union[MatrixResult, MatrixRequest]; keep this simple
+    matrix: Optional[MatrixResult] = None  # JSON with {distances, durations} parses to MatrixResult
     fleet: Union[List[Vehicle], Fleet]
     depot_index: int = 0
 
@@ -47,5 +47,46 @@ class SolveRequest(BaseModel):
     # Objective weights for multi-objective solvers
     weights: Optional[ObjectiveWeights] = None
 
-    #coordinate-mode payload for VROOM
+    # coordinate-mode payload for VROOM
     waypoints: Optional[List[Waypoint]] = None
+
+    # ── Normalizers / compatibility shims ─────────────────────────────────────────
+    @field_validator("pickup_delivery_pairs", mode="before")
+    @classmethod
+    def _normalize_pickup_delivery_pairs(cls, v: Any):
+        """
+        Accept items as:
+          - [pickup, delivery]
+          - (pickup, delivery)
+          - {"pickup": p, "delivery": d, "quantity"?: q}
+          - {"from": p, "to": d}   (alias)
+        Normalize to list[PickupDeliveryPair]-compatible dicts.
+        """
+        if v is None:
+            return None
+
+        out: List[dict] = []
+        for item in v:
+            # list/tuple form
+            if isinstance(item, (list, tuple)) and len(item) == 2:
+                p, d = item
+                out.append({"pickup": int(p), "delivery": int(d)})
+                continue
+
+            # dict form
+            if isinstance(item, dict):
+                if "pickup" in item and "delivery" in item:
+                    rec = {"pickup": int(item["pickup"]), "delivery": int(item["delivery"])}
+                    if "quantity" in item and item["quantity"] is not None:
+                        rec["quantity"] = int(item["quantity"])
+                    out.append(rec)
+                    continue
+                if "from" in item and "to" in item:
+                    out.append({"pickup": int(item["from"]), "delivery": int(item["to"])})
+                    continue
+
+            raise ValueError(
+                "Each pickup_delivery_pairs item must be [pickup, delivery], "
+                "(pickup, delivery), or {pickup:int, delivery:int[, quantity:int]} (or {from,to})."
+            )
+        return out
