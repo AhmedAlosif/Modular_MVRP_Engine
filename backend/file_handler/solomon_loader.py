@@ -5,6 +5,8 @@ from typing import Any, Dict, List, Optional, Tuple
 import math
 import re
 
+SECONDS_PER_MIN = 60
+
 def _euclid_mtx(coords: List[Tuple[float, float]]) -> List[List[float]]:
     n = len(coords)
     mtx = [[0.0]*n for _ in range(n)]
@@ -18,20 +20,33 @@ def _euclid_mtx(coords: List[Tuple[float, float]]) -> List[List[float]]:
     return mtx
 
 def _find_vehicle_block(lines: List[str]) -> Tuple[int, int]:
-    """Return (vehicles, capacity) or (1, 10**9) if not found."""
-    veh, cap = 1, 10**9
-    for i, ln in enumerate(lines[:30]):
-        if re.search(r"\bVEHICLE\b", ln, re.I):
-            # look ahead a few lines for two integers (NUMBER CAPACITY)
-            for j in range(i, min(i+6, len(lines))):
-                nums = re.findall(r"-?\d+", lines[j])
+    """
+    Return (vehicles, capacity).
+    Robust to:
+      VEHICLE
+      NUMBER  CAPACITY
+      10      200
+    """
+    veh, cap = None, None
+    for i, ln in enumerate(lines[:60]):
+        if re.search(r"\bVEHICLES?\b", ln, re.I) or re.search(r"\bVEHICLE\b", ln, re.I):
+            for j in range(i, min(i + 12, len(lines))):
+                row = lines[j]
+                # capture two numeric tokens anywhere on the same line
+                nums = re.findall(r"-?\d+(?:\.\d+)?", row)
                 if len(nums) >= 2:
                     try:
-                        veh, cap = int(nums[0]), int(nums[1])
-                        return veh, cap
+                        veh = int(float(nums[0]))
+                        cap = int(float(nums[1]))
+                        break
                     except Exception:
                         pass
             break
+    # Sensible Solomon defaults if header is missing
+    if veh is None or veh <= 0:
+        veh = 10  # C1 family uses 10 in classic sets; safe minimum
+    if cap is None or cap <= 0:
+        cap = 200
     return veh, cap
 
 def _find_data_start(lines: List[str]) -> Optional[int]:
@@ -131,8 +146,8 @@ def load_solomon_txt(path: str | Path, compute_matrix: bool = True) -> Dict[str,
             "lat": float(x),
             "lon": float(y),
             "demand": int(demands[i]),
-            "service_time": int(service[i]),
-            "time_window": [int(ready[i]), int(due[i])],
+            "service_time": int(service[i]) * SECONDS_PER_MIN,
+            "time_window": [int(ready[i]) * SECONDS_PER_MIN, int(due[i]) * SECONDS_PER_MIN],
             "depot": (i == depot_index),
         })
 
@@ -154,8 +169,9 @@ def load_solomon_txt(path: str | Path, compute_matrix: bool = True) -> Dict[str,
     matrix = None
     if compute_matrix and n > 0:
         distances = _euclid_mtx([(float(x), float(y)) for (x, y) in coords])
-        matrix = {"distances": distances, "durations": [[d for d in row] for row in distances]}
-
+        # Solomon convention: travel time == distance (minutes) → seconds
+        durations = [[int(round(d * 60)) for d in row] for row in distances]
+        matrix = {"distances": distances, "durations": durations}
     return {
         "waypoints": waypoints,
         "fleet": {"vehicles": vehicles_list},

@@ -164,10 +164,15 @@ def load_with_vrplib(path: str | Path, compute_matrix: bool = True) -> Dict[str,
 
     matrix = None
     if distances is not None:
-        matrix = {
-            "distances": distances,
-            "durations": [[d for d in row] for row in distances],
-        }
+        # If it's a Solomon .txt, durations are distance (min) → seconds
+        pstr = str(path).lower()
+        is_solomon_txt = pstr.endswith(".txt") and ("solomon" in pstr or "/solomon/" in pstr)
+        durations = (
+            [[int(round(d * 60)) for d in row] for row in distances]
+            if is_solomon_txt else
+            [[d for d in row] for row in distances]
+        )
+        matrix = {"distances": distances, "durations": durations}
 
     return {
         "waypoints": waypoints,

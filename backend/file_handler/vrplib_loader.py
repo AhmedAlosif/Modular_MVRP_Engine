@@ -209,17 +209,18 @@ def _parse_solomon_text(contents: str) -> Dict[str, any]:
             # keep planar convention x->lat, y->lon (as your xml loader does)
             "lat": x, "lon": y,
             "demand": dem,
-            "service_time": service,
-            "time_window": [ready, due],
+            "service_time": service * 60,
+            "time_window": [ready * 60, due * 60],
             "depot": False,   # set below
         })
 
-    # Depot: Solomon usually uses customer 1 as depot
+    # Depot: prefer id "0" if present, else the smallest id
     if waypoints:
-        # depot is the first row (cid == 1)
+        ids = [int(wp["id"]) for wp in waypoints]
+        depot_id = 0 if 0 in ids else min(ids)
         for idx, wp in enumerate(waypoints):
-            if wp["id"] == "1":
-                wp["depot"] = True
+            wp["depot"] = (int(wp["id"]) == depot_id)
+            if wp["depot"]:
                 depot_index = idx
                 break
 
@@ -269,7 +270,7 @@ def load_vrplib(file_path: str | Path, compute_matrix: bool = True) -> Dict[str,
         if compute_matrix and data.get("waypoints"):
             coords_xy = [(wp["lat"], wp["lon"]) for wp in data["waypoints"]]
             distances = _build_distance_matrix_xy(coords_xy)
-            durations = [[distances[i][j] for j in range(len(distances))]
+            durations  = [[int(round(distances[i][j] * 60)) for j in range(len(distances))]
                          for i in range(len(distances))]
             data["matrix"] = {"distances": distances, "durations": durations}
         data["meta"]["source"] = str(p)

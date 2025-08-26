@@ -1,5 +1,5 @@
 from typing import List, Optional, Dict, Any
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, model_validator, field_validator
 
 
 class Location(BaseModel):
@@ -24,6 +24,21 @@ class Waypoint(BaseModel):
     paired_with: Optional[str] = None
     priority: Optional[int] = 1
     emissions: Optional[float] = None
+
+
+    # NEW: accept demand = int -> [int] also for nested shape
+    @field_validator("demand", mode="before")
+    @classmethod
+    def _coerce_demand_list(cls, v):
+        if v is None:
+            return None
+        if isinstance(v, list):
+            return [int(x) for x in v]
+        # accept int/float/str "3"
+        try:
+            return [int(float(v))]
+        except Exception:
+            return v  # let pydantic report if it still doesn't fit
 
     # Accept and convert the existing "flat" schema automatically:
     @model_validator(mode="before")

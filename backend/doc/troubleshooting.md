@@ -6,7 +6,7 @@
 
 ## OR-Tools "CP Solver fail"
 - Check matrix shape is **square** and >= 2.
-- Verify `fleet` has at least one vehicle and depot_index in bounds.
+- Verify `fleet` has at least one vehicle and `depot_index` in bounds.
 - Inspect time windows and service times; infeasible windows cause failures.
 
 ## Pyomo "aborted" with solution

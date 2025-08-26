@@ -59,3 +59,12 @@ backend/reports/
 
 # Frontend test results
 test-results/
+
+# frontend
+/frontend/node_modules
+/frontend/.next
+/frontend/test-results
+
+# backend
+/backend/.venv
+/backend/__pycache__

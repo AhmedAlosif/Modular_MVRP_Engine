@@ -43,6 +43,7 @@ uvicorn main:app --reload
   ]
 }
 ```
+
 Tips:
 - Use **justMyCode** to step through your routes/solvers.
 - Set breakpoints in `api/solver_routes.py` around normalization and solver dispatch.

@@ -12,7 +12,7 @@ def load_geojson_points(path: str) -> list[Waypoint]:
         lon, lat = feat["geometry"]["coordinates"]
         props = feat.get("properties", {}) or {}
         wps.append(Waypoint(
-            id=str(props.get("id", i)),
+            id=str(props.get("id", props.get("name", i))),
             lat=float(lat),
             lon=float(lon),
             demand=int(props.get("demand", 0)) or 0,

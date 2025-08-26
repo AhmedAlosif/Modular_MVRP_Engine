@@ -170,7 +170,9 @@ def find_pair(dataset: str, name: str) -> Dict:
     if not ds:
         return {"instance": None, "solution": None}
 
-    target = name.lower()
+    # accept both "c101" and "c101.vrp"
+    from pathlib import Path
+    target = Path(name).stem.lower()
     instance: Optional[FileEntry] = None
     solution: Optional[FileEntry] = None
 
