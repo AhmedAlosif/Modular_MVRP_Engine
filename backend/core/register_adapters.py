@@ -7,7 +7,8 @@ from core.adapter_factory_registry import AdapterFactoryRegistry
 
 # Offline adapters
 from adapters.offline.haversine_adapter import HaversineAdapter
-from adapters.online.osm_graph_adapter import OsmGraphAdapter  # <-- new
+from adapters.online.osm_graph_adapter import OsmGraphAdapter
+from adapters.offline.euclidean_adapter import EuclideanAdapter
 
 # Online adapters
 from adapters.online.openrouteservice_adapter import ORSDistanceMatrixAdapter
@@ -93,6 +94,8 @@ def register_adapters() -> None:
         network_type = os.getenv("OSM_GRAPH_NET", "drive")
         _safe_register("osm_graph", lambda: OsmGraphAdapter(buffer_m=buffer_m, network_type=network_type))
 
+    # Euclidean Adapter
+        _safe_register("euclidean", lambda: EuclideanAdapter())
     # -----------------------------
     # Online providers
     # -----------------------------

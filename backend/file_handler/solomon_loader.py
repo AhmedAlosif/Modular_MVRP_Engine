@@ -20,19 +20,11 @@ def _euclid_mtx(coords: List[Tuple[float, float]]) -> List[List[float]]:
     return mtx
 
 def _find_vehicle_block(lines: List[str]) -> Tuple[int, int]:
-    """
-    Return (vehicles, capacity).
-    Robust to:
-      VEHICLE
-      NUMBER  CAPACITY
-      10      200
-    """
     veh, cap = None, None
     for i, ln in enumerate(lines[:60]):
         if re.search(r"\bVEHICLES?\b", ln, re.I) or re.search(r"\bVEHICLE\b", ln, re.I):
             for j in range(i, min(i + 12, len(lines))):
                 row = lines[j]
-                # capture two numeric tokens anywhere on the same line
                 nums = re.findall(r"-?\d+(?:\.\d+)?", row)
                 if len(nums) >= 2:
                     try:
@@ -42,30 +34,19 @@ def _find_vehicle_block(lines: List[str]) -> Tuple[int, int]:
                     except Exception:
                         pass
             break
-    # Sensible Solomon defaults if header is missing
-    if veh is None or veh <= 0:
-        veh = 10  # C1 family uses 10 in classic sets; safe minimum
-    if cap is None or cap <= 0:
-        cap = 200
+    if veh is None or veh <= 0: veh = 10
+    if cap is None or cap <= 0: cap = 200
     return veh, cap
 
 def _find_data_start(lines: List[str]) -> Optional[int]:
-    """
-    Locate the first data row line (after headers like 'CUSTOMER' and 'CUST NO. ...').
-    Returns the index of the first possible data line.
-    """
     for i, ln in enumerate(lines):
         u = ln.upper()
-        # common two-line header: 'CUSTOMER' then columns
         if u.startswith("CUSTOMER"):
-            # next non-empty line should be the column header
             k = i + 1
             while k < len(lines) and not lines[k].strip():
                 k += 1
             if k < len(lines) and re.search(r"CUST\s*NO\.", lines[k], re.I):
-                # data begins after the header line
                 return k + 1
-        # single header line that already contains columns
         if re.search(r"CUST\s*NO\.", ln, re.I) and re.search(r"XCOORD", ln, re.I):
             return i + 1
     return None
@@ -74,7 +55,6 @@ def load_solomon_txt(path: str | Path, compute_matrix: bool = True) -> Dict[str,
     p = Path(path)
     text = p.read_text(encoding="utf-8", errors="ignore")
     lines_raw = text.splitlines()
-    # normalize spacing (keep original for error msg if needed)
     lines = [ln.rstrip("\r\n") for ln in lines_raw]
 
     vehicles, capacity = _find_vehicle_block(lines)
@@ -85,9 +65,7 @@ def load_solomon_txt(path: str | Path, compute_matrix: bool = True) -> Dict[str,
         for ln in lines[start:]:
             if not ln.strip():
                 continue
-            # Extract numbers robustly (floats allowed)
             nums = re.findall(r"-?\d+(?:\.\d+)?", ln)
-            # Expect at least: id, x, y, demand, ready, due, service  => 7 numeric tokens
             if len(nums) < 7:
                 continue
             cid, x, y, dem, ready, due, service = nums[:7]
@@ -102,18 +80,15 @@ def load_solomon_txt(path: str | Path, compute_matrix: bool = True) -> Dict[str,
                     "service": int(float(service)),
                 })
             except Exception:
-                # skip malformed lines
                 continue
 
     if not rows:
-        # Give a concise diagnostic to help future debugging
         head = [ln.strip() for ln in lines[:8]]
         raise ValueError(
             f"Solomon parser: no rows parsed from {p}. "
             f"Header? -> {head}"
         )
 
-    # Build arrays indexed by customer id (assumes depot id 0 present; if not, we’ll still work)
     max_id = max(r["id"] for r in rows)
     n = max_id + 1
     coords = [(0.0, 0.0)] * n
@@ -128,30 +103,30 @@ def load_solomon_txt(path: str | Path, compute_matrix: bool = True) -> Dict[str,
             coords[i] = (r["x"], r["y"])
             demands[i] = r["demand"]
             ready[i] = r["ready"]
-            due[i] = max(ready[i], r["due"])  # ensure not inverted
+            due[i] = max(ready[i], r["due"])
             service[i] = r["service"]
 
     depot_index = 0 if any(r["id"] == 0 for r in rows) else (min(r["id"] for r in rows) if rows else 0)
-    # Make depot window broad
     max_due = max(due) if due else 10**9
     if 0 <= depot_index < n:
         ready[depot_index] = min(ready[depot_index], 0)
         due[depot_index] = max(due[depot_index], max_due)
 
-    # Build waypoints (planar: lat=x, lon=y)
+    # 👇 Keep both spaces: solver-space (x,y) and legacy lat/lon fields
     waypoints: List[Dict[str, Any]] = []
     for i, (x, y) in enumerate(coords):
         waypoints.append({
             "id": str(i),
-            "lat": float(x),
-            "lon": float(y),
+            # solver space
+            "x": float(x), "y": float(y),
+            # legacy planar-as-lat/lon (kept for backward compatibility)
+            "lat": float(x), "lon": float(y),
             "demand": int(demands[i]),
             "service_time": int(service[i]) * SECONDS_PER_MIN,
             "time_window": [int(ready[i]) * SECONDS_PER_MIN, int(due[i]) * SECONDS_PER_MIN],
             "depot": (i == depot_index),
         })
 
-    # Fleet: identical vehicles with parsed capacity
     vehicles_list = [{
         "id": f"veh-{k+1}",
         "start": depot_index,
@@ -165,14 +140,18 @@ def load_solomon_txt(path: str | Path, compute_matrix: bool = True) -> Dict[str,
         "emissions_per_km": None,
     } for k in range(max(1, int(vehicles)))]
 
-    # Matrix
     matrix = None
     if compute_matrix and n > 0:
         distances = _euclid_mtx([(float(x), float(y)) for (x, y) in coords])
-        # Solomon convention: travel time == distance (minutes) → seconds
         durations = [[int(round(d * 60)) for d in row] for row in distances]
         matrix = {"distances": distances, "durations": durations}
+
     return {
+        "edge_weight_type": "EUC_2D",
+        "coordinate_spaces": {
+            "solver": {"type": "euclidean", "fields": ["x", "y"]},
+            "display": {"type": "wgs84", "fields": ["lon", "lat"]}  # will be filled by /benchmarks/load?include_display=true
+        },
         "waypoints": waypoints,
         "fleet": {"vehicles": vehicles_list},
         "depot_index": depot_index,

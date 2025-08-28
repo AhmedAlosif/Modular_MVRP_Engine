@@ -49,9 +49,59 @@ const relativeToCwd = (path, cwd) => {
 const isProbablyDir = (item, displayName, path) => {
   const t = typeof item === 'object' ? (item.type || '') : '';
   if (t === 'dir' || item?.is_dir === true || /\/$/.test(path)) return true;
-  // heuristic: no extension and no dot often means folder
   if (!/\.[a-z0-9]+$/i.test(displayName) && !displayName.includes('.')) return true;
   return false;
+};
+
+const isFiniteNum = (x) => Number.isFinite(Number(x));
+const inWGS84 = (lon, lat) => isFiniteNum(lon) && isFiniteNum(lat) && lon >= -180 && lon <= 180 && lat >= -90 && lat <= 90;
+
+/** project arbitrary XY to a ~1.2° box around (0,0) for display */
+function projectXYToLonLat(pointsXY /* [{X,Y}] */) {
+  if (!Array.isArray(pointsXY) || !pointsXY.length) return [];
+  const xs = pointsXY.map(p => Number(p.X)), ys = pointsXY.map(p => Number(p.Y));
+  const minX = Math.min(...xs), maxX = Math.max(...xs);
+  const minY = Math.min(...ys), maxY = Math.max(...ys);
+  const w = Math.max(1e-9, maxX - minX), h = Math.max(1e-9, maxY - minY);
+  const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+  const sx = 1.2 / w, sy = 1.2 / h;
+  return pointsXY.map(p => ({ lon: (p.X - cx) * sx, lat: (p.Y - cy) * sy }));
+}
+
+/** detect planar/EUCLIDEAN using presence of x/y across majority */
+function detectPlanar(waypoints) {
+  const xyCount = (waypoints || []).filter(w => isFiniteNum(w?.x) && isFiniteNum(w?.y)).length;
+  const n = (waypoints || []).length;
+  return n > 0 && xyCount >= Math.ceil(n * 0.6);
+}
+
+/** choose display coords; for planar project XY; else prefer display_lon/lat -> lon/lat */
+function buildDisplayCoords(wps) {
+  const planar = detectPlanar(wps);
+  if (planar) {
+    const xy = (wps || []).map(w => ({ X: Number(w.x ?? w.lat), Y: Number(w.y ?? w.lon) }));
+    const ll = projectXYToLonLat(xy);
+    return { coords: ll.map(p => [p.lon, p.lat]), planar };
+  }
+  const coords = (wps || []).map(w => {
+    const lon = Number((Array.isArray(w.coordinates) ? w.coordinates[0] : undefined) ?? w.display_lon ?? w.lon);
+    const lat = Number((Array.isArray(w.coordinates) ? w.coordinates[1] : undefined) ?? w.display_lat ?? w.lat);
+    if (inWGS84(lon, lat)) return [lon, lat];
+    return [0, 0];
+  });
+  return { coords, planar: false };
+}
+
+const inferVrpType = (waypoints, vehiclesLike) => {
+  const hasTW = (waypoints || []).some(w => Array.isArray(w.time_window) || Array.isArray(w.timeWindow));
+  const hasPD = (waypoints || []).some(w => w?.pairId != null || w?.pair_id != null || (String(w?.type || '').toLowerCase() === 'pickup'));
+  const hasDemand = (waypoints || []).some(w => Number(w?.demand) > 0);
+  const hasCap = (Array.isArray(vehiclesLike) ? vehiclesLike : []).some(v => Array.isArray(v?.capacity) && v.capacity.some(c => c > 0));
+  if (hasPD && hasTW) return 'PDPTW';
+  if (hasPD) return 'PD';
+  if (hasTW) return 'VRPTW';
+  if (hasDemand && hasCap) return 'CVRP';
+  return 'TSP';
 };
 
 export default function CustomDatasetPanel() {
@@ -64,6 +114,8 @@ export default function CustomDatasetPanel() {
   const solverEngine = useUiStore(s => s.solverEngine);
   const routingAdapter = useUiStore(s => s.routingAdapter);
   const vrpType = useUiStore(s => s.vrpType);
+  const setVrpType = useUiStore(s => s.setVrpType);
+  const setRoutingAdapter = useUiStore(s => s.setRoutingAdapter);
 
   // ===== Backend hooks
   const datasetsQ = useFileDatasets();
@@ -131,6 +183,7 @@ export default function CustomDatasetPanel() {
   const [parsed, setParsed] = useState(null);
   const [loadedFileId, setLoadedFileId] = useState(null);
   const lastParsedForPath = useRef({ path: null, data: null });
+  const [busySolve, setBusySolve] = useState(false);
 
   // ===== Helpers
   const detectKindFromName = useCallback((name = '') => {
@@ -140,29 +193,27 @@ export default function CustomDatasetPanel() {
     if (ext === 'vrp' || ext === 'vrplib') return 'vrplib';
     if (ext === 'xml') return 'xml';
     if (ext === 'txt') return 'txt';
-    // default to geojson (avoid 'auto' 400s)
     return 'geojson';
   }, []);
 
   const refresh = useCallback(() => {
-    console.debug('[files] refresh list', filesParams);
+    console.debug('[CustomDS] refresh list', filesParams);
     filesQ.refetch?.();
   }, [filesQ, filesParams]);
 
   const onUpload = useCallback(async (e) => {
     const files = Array.from(e.target.files || []);
     if (!files.length || !dataset) return;
-    console.debug('[files] uploading', { count: files.length, subdir: uploadSubdir, dataset });
+    console.debug('[CustomDS] uploading', { count: files.length, subdir: uploadSubdir, dataset });
     for (const f of files) {
       await upload.mutateAsync({ file: f, subdir: uploadSubdir || undefined, overwrite: false });
     }
     e.target.value = '';
-    // Upload does not affect browseCwd; user can Refresh explicitly
   }, [upload, uploadSubdir, dataset]);
 
   const onDelete = useCallback(async (path) => {
     if (!confirm(`Delete file?\n${path}`)) return;
-    console.debug('[files] delete', path);
+    console.debug('[CustomDS] delete', path);
     await del.mutateAsync({ path });
     refresh();
   }, [del, refresh]);
@@ -174,40 +225,67 @@ export default function CustomDatasetPanel() {
       setParsed(null);
       const pathNorm = normalizePathForParse(path);
       const kind = kindHint || detectKindFromName(path);
-      console.debug('[files] parse', { path: pathNorm, kind });
-      // Soft options; backend can ignore unknown keys
+      console.debug('[CustomDS] parse', { path: pathNorm, kind });
       const res = await parse.mutateAsync({
         path: pathNorm,
         kind,
-        options: { coordsSource: 'geometry', ignoreNulls: true }
+        options: {}
       });
-      const data = res?.data || res;
-      setParsed(data);
-      lastParsedForPath.current = { path: pathNorm, data };
+      const raw = res?.data || res;
+
+      // planarity & display coords
+      const wpsRaw = raw?.waypoints || [];
+      const { coords, planar } = buildDisplayCoords(wpsRaw);
+
+      // infer VRP type and possibly force euclidean local for planar
+      const vehiclesArr =
+        Array.isArray(raw?.fleet?.vehicles) ? raw.fleet.vehicles :
+          Array.isArray(raw?.fleet) ? raw.fleet : [];
+      const inferred = inferVrpType(wpsRaw, vehiclesArr);
+      setVrpType(inferred);
+      if (planar) {
+        console.debug('[CustomDS] planar detected → forcing adapter euclidean (local)');
+        setRoutingAdapter?.('euclidean (local)');
+      }
+
+      // normalize
+      const norm = {
+        ...raw,
+        waypoints: wpsRaw.map((w, i) => ({
+          ...w,
+          id: w.id ?? i,
+          coordinates: coords[i] || [Number(w.lon ?? 0), Number(w.lat ?? 0)]
+        }))
+      };
+      setParsed({ ...norm, _planar: planar });
+      lastParsedForPath.current = { path: pathNorm, data: norm };
+      console.debug('[CustomDS] parsed ok', { n: norm.waypoints?.length ?? 0, planar, inferred });
     } catch (e) {
-      // Common backend error case for bad/missing coords in geojson
-      console.error('Parse failed', e);
+      console.error('[CustomDS] Parse failed', e);
       alert(`Parse failed: ${e?.message || e}`);
-      // BACKEND NOTE: /files/parse should skip features with null coords or expose an option to ignore them.
     }
-  }, [parse, detectKindFromName, normalizePathForParse]);
+  }, [parse, detectKindFromName, normalizePathForParse, setVrpType, setRoutingAdapter]);
 
   const loadToMap = useCallback((bundle, nameHint) => {
     const wps = bundle?.waypoints ?? [];
     if (!wps.length) { alert('No waypoints in parsed bundle'); return; }
 
     const fileId = `server:${nameHint || 'parsed'}:${bundle?.source || Date.now()}`;
-    console.debug('[map] loadToMap', { count: wps.length, fileId });
+    console.debug('[CustomDS] loadToMap', { count: wps.length, fileId });
 
     wps.forEach((w, i) => {
-      const lng = Number(w.lon ?? (Array.isArray(w.coordinates) ? w.coordinates[0] : undefined));
-      const lat = Number(w.lat ?? (Array.isArray(w.coordinates) ? w.coordinates[1] : undefined));
-      if (Number.isFinite(lng) && Number.isFinite(lat)) {
+      const [lng, lat] = Array.isArray(w.coordinates)
+        ? w.coordinates
+        : [Number(w.lon), Number(w.lat)];
+      if (Number.isFinite(lng) && Number.isFinite(lat) &&
+        lng >= -180 && lng <= 180 && lat >= -90 && lat <= 90) {
         addWaypoint({
           id: String(w.id ?? i),
           coordinates: [lng, lat],
           fileId,
           type: w.depot ? 'Depot' : (w.type ?? 'Delivery'),
+          x: isFiniteNum(w.x) ? Number(w.x) : undefined,
+          y: isFiniteNum(w.y) ? Number(w.y) : undefined,
           demand: w.demand ?? 0,
           serviceTime: w.service_time ?? 0,
           timeWindow: Array.isArray(w.time_window) ? w.time_window : null,
@@ -219,7 +297,7 @@ export default function CustomDatasetPanel() {
       type: 'FeatureCollection',
       features: wps
         .map((w, i) => {
-          const lon = Number(w.lon), lat = Number(w.lat);
+          const [lon, lat] = Array.isArray(w.coordinates) ? w.coordinates : [w.lon, w.lat];
           if (!Number.isFinite(lon) || !Number.isFinite(lat)) return null;
           return {
             type: 'Feature',
@@ -236,7 +314,7 @@ export default function CustomDatasetPanel() {
 
   const unloadFromMap = useCallback(() => {
     if (loadedFileId && typeof removeWaypointsByFileId === 'function') {
-      console.debug('[map] unloadFromMap', loadedFileId);
+      console.debug('[CustomDS] unloadFromMap', loadedFileId);
       removeWaypointsByFileId(loadedFileId);
     }
     setLoadedFileId(null);
@@ -294,48 +372,60 @@ export default function CustomDatasetPanel() {
   const onSolveWithParsed = useCallback(async (parsedData) => {
     try {
       if (!parsedData?.waypoints?.length) throw new Error('Parse a file first.');
+      setBusySolve(true);
+
       const depotIndex = Number(parsedData.depot_index ?? 0);
 
       const pts = parsedData.waypoints
         .map(w => ({ lat: Number(w.lat ?? w.coordinates?.[1]), lon: Number(w.lon ?? w.coordinates?.[0]) }))
         .filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lon));
 
+      // infer VRP type on the fly (keeps UI consistent)
+      const vehiclesArr =
+        Array.isArray(parsedData.fleet?.vehicles) ? parsedData.fleet.vehicles :
+          Array.isArray(parsedData.fleet) ? parsedData.fleet : [];
+      setVrpType(inferVrpType(parsedData.waypoints, vehiclesArr));
+
       let matrix = parsedData.matrix;
       if (!matrix?.distances && pts.length >= 2) {
-        console.debug('[matrix] request', { adapter: routingAdapter, n: pts.length });
-        const dmRes = await dm.mutateAsync({
-          adapter: routingAdapter,
-          origins: pts,
-          destinations: pts,
-          mode: 'driving'
-        });
-        matrix = dmRes?.data?.matrix || dmRes?.matrix;
+        const planar = !!parsedData._planar;
+        if (planar) {
+          const { buildEuclideanMatrix } = await import('@/utils/euclideanMatrix');
+          const xy = pts.map(p => [p.lon, p.lat]);
+          matrix = buildEuclideanMatrix(xy, { durationsAs: 'seconds', speedKph: 60 });
+          console.debug('[CustomDS] built euclidean matrix (local)');
+          setRoutingAdapter?.('euclidean (local)');
+        } else {
+          const dmRes = await dm.mutateAsync({
+            adapter: routingAdapter,
+            origins: pts, destinations: pts, mode: 'driving',
+            parameters: { metrics: ['distance', 'duration'], units: 'm' }
+          });
+          matrix = dmRes?.data?.matrix || dmRes?.matrix;
+        }
         if (!matrix?.distances) throw new Error('No matrix.distances from /distance-matrix');
       }
 
-      const fleet = Array.isArray(parsedData.fleet?.vehicles)
-        ? { vehicles: parsedData.fleet.vehicles }
-        : Array.isArray(parsedData.fleet) ? { vehicles: parsedData.fleet } : { vehicles: [] };
+      const fleet =
+        Array.isArray(parsedData.fleet?.vehicles)
+          ? { vehicles: parsedData.fleet.vehicles }
+          : Array.isArray(parsedData.fleet) ? { vehicles: parsedData.fleet } : { vehicles: [] };
 
       if (!fleet.vehicles.length) {
         const totalDemand = (parsedData.waypoints || []).reduce((s, w) => s + Number(w.demand || 0), 0);
         fleet.vehicles = [{ id: 'veh-1', capacity: [Math.max(1, totalDemand)], start: depotIndex, end: depotIndex }];
       }
 
-      const payload = { solver: solverEngine, depot_index: depotIndex, fleet, weights: { distance: 1, time: 0 } };
-      if (vrpType === 'TSP') {
-        payload.matrix = matrix;
-      } else if (vrpType === 'CVRP') {
-        payload.matrix = matrix;
+      const payload = { solver: solverEngine, depot_index: depotIndex, fleet, weights: { distance: 1, time: 0 }, matrix };
+
+      if (vrpType === 'CVRP') {
         payload.demands = parsedData.waypoints.map(w => Number(w.demand || 0));
       } else if (vrpType === 'VRPTW') {
-        payload.matrix = matrix;
         payload.node_time_windows = parsedData.waypoints.map(w =>
           Array.isArray(w.time_window) ? w.time_window : [0, 24 * 3600]
         );
         payload.node_service_times = parsedData.waypoints.map(w => Number(w.service_time || 0));
       } else if (vrpType === 'PDPTW') {
-        payload.matrix = matrix;
         payload.node_time_windows = parsedData.waypoints.map(w =>
           Array.isArray(w.time_window) ? w.time_window : [0, 24 * 3600]
         );
@@ -344,11 +434,9 @@ export default function CustomDatasetPanel() {
           payload.pickup_delivery_pairs = parsedData.pickup_delivery_pairs;
         }
         payload.demands = parsedData.waypoints.map(w => Number(w.demand || 0));
-      } else if (matrix?.distances) {
-        payload.matrix = matrix;
       }
 
-      console.debug('[solver] request', { solver: solverEngine, vrpType, vehicles: fleet.vehicles.length });
+      console.debug('[CustomDS] solve request', { solver: solverEngine, vrpType, vehicles: fleet.vehicles.length });
       const res = await solve.mutateAsync(payload);
 
       const wpsForStore = parsedData.waypoints.map((w, i) => ({
@@ -368,10 +456,12 @@ export default function CustomDatasetPanel() {
 
       alert('Solve OK — see map & ResultSummaryPanel');
     } catch (err) {
-      console.error('solve failed', err);
+      console.error('[CustomDS] solve failed', err);
       alert(err?.message || 'Solve failed');
+    } finally {
+      setBusySolve(false);
     }
-  }, [dm, solve, addSolutionFromSolver, routingAdapter, solverEngine, vrpType]);
+  }, [dm, solve, addSolutionFromSolver, routingAdapter, solverEngine, vrpType, setVrpType, setRoutingAdapter]);
 
   // sanitize/auto-default export paths
   const sanitizeOutPath = (p, fallback) => {
@@ -390,7 +480,7 @@ export default function CustomDatasetPanel() {
     );
     if (outPath === null) return; // cancelled
     const safe = sanitizeOutPath(outPath, def);
-    console.debug('[export] raw', safe);
+    console.debug('[CustomDS] export raw', safe);
     const contentStr = typeof parsed === 'string' ? parsed : JSON.stringify(parsed);
     await writeRaw.mutateAsync({ path: safe, content: contentStr, overwrite: true });
     alert('Raw export saved.');
@@ -407,16 +497,15 @@ export default function CustomDatasetPanel() {
     );
     if (outPath === null) return;
     const safe = sanitizeOutPath(outPath, def);
-    console.debug('[export] vrplib', safe);
+    console.debug('[CustomDS] export vrplib', safe);
     await writeVrplib.mutateAsync({
-      path: safe,               // << correct key (not out_path)
+      path: safe,               // correct key (not out_path)
       ...normalized,
     });
     alert('VRPLIB export saved.');
   }, [parsed, writeVrplib, buildNormalizedProblem, dataset]);
 
   // ----- derive folder list & visible files -----
-  // dropdown: list of folders from current results (top-level under current browseCwd)
   const browseFolders = useMemo(() => {
     const set = new Set();
     for (const it of items) {
@@ -425,16 +514,14 @@ export default function CustomDatasetPanel() {
       const rel = relativeToCwd(path, browseCwd);
       const parts = rel.split('/').filter(Boolean);
       if (parts.length > 1) set.add(joinPath(browseCwd, parts[0]) + '/');
-      // Some backends return folders as items—catch those too
       if (isProbablyDir(it, name, path)) {
         const p = path.endsWith('/') ? path : `${path}/`;
         set.add(p);
       }
     }
-    return [''].concat(Array.from(set).sort()); // '' means root of current dataset
+    return [''].concat(Array.from(set).sort());
   }, [items, browseCwd]);
 
-  // show only files directly under browseCwd (not subfolders), and never show folders as rows
   const visibleFiles = useMemo(() => {
     const out = [];
     for (const it of items) {
@@ -442,7 +529,6 @@ export default function CustomDatasetPanel() {
       const path = (typeof it === 'object' && it.path)
         ? it.path
         : joinPath(browseCwd, displayName);
-      // exclude folders outright
       if (isProbablyDir(it, displayName, path)) continue;
       const rel = relativeToCwd(path, browseCwd);
       if (!rel.includes('/')) out.push({ it, displayName, path });
@@ -486,17 +572,14 @@ export default function CustomDatasetPanel() {
 
       {/* 2) Browse Files */}
       <Section title="🗂️ Browse Files" defaultOpen>
-        {/* Browsing folder (separate control) */}
-        <div className="flex items-center gap-2 mb-2 text-sm">
-          <label className="text-sm">Browse folder:</label>
-        </div>
         <div className="flex items-center gap-2 mb-2">
+          <label className="text-sm">Browse folder:</label>
           <select
             className="p-1 w-30 border rounded"
             value={browseCwd}
-            onChange={(e) => { 
+            onChange={(e) => {
               setBrowseCwd(e.target.value); setOffset(0);
-             }}
+            }}
             disabled={!dataset}
           >
             {browseFolders.map((f) => (
@@ -540,7 +623,6 @@ export default function CustomDatasetPanel() {
           />
         </div>
 
-        {/* Collapsible results box */}
         <Section title="Results" defaultOpen>
           <div className="max-h-60 overflow-y-auto border rounded p-2 text-sm space-y-2" aria-label="results-list">
             {!dataset && <div className="text-xs text-gray-500">Choose a dataset to browse files.</div>}
@@ -553,13 +635,11 @@ export default function CustomDatasetPanel() {
 
             {dataset && visibleFiles.map(({ it, displayName, path }, idx) => (
               <div key={`${path}-${idx}`} className="p-2 border rounded">
-                {/* filename (ellipsized, tooltip only — no highlight color) */}
                 <div className="truncate font-mono" title={displayName}>
                   {displayName}
                 </div>
                 {it?.ext && <div className="text-[11px] text-gray-500">{String(it.ext)}</div>}
 
-                {/* actions */}
                 <div className="mt-1 flex flex-wrap gap-1">
                   <button
                     onClick={() => onParse(path, detectKindFromName(displayName))}
@@ -570,8 +650,10 @@ export default function CustomDatasetPanel() {
                   <button
                     onClick={() => onSolveFromPath(path)}
                     className="text-xs px-2 py-0.5 bg-indigo-600 text-white rounded"
+                    disabled={busySolve || solve.isPending}
+                    title={busySolve || solve.isPending ? 'Solving…' : 'Solve parsed file'}
                   >
-                    Solve
+                    {busySolve || solve.isPending ? 'Solving…' : 'Solve'}
                   </button>
                   <button
                     onClick={() => onDelete(path)}
@@ -655,7 +737,13 @@ export default function CustomDatasetPanel() {
               ) : (
                 <button onClick={unloadFromMap} className="text-xs px-3 py-1 bg-gray-700 text-white rounded">🗑 Unload</button>
               )}
-              <button onClick={() => onSolveWithParsed(parsed)} className="text-xs px-3 py-1 bg-indigo-600 text-white rounded">🧠 Solve</button>
+              <button
+                onClick={() => onSolveWithParsed(parsed)}
+                className="text-xs px-3 py-1 bg-indigo-600 text-white rounded"
+                disabled={busySolve || solve.isPending}
+              >
+                {busySolve || solve.isPending ? 'Solving…' : '🧠 Solve'}
+              </button>
               <button onClick={onExportRaw} className="text-xs px-3 py-1 bg-purple-600 text-white rounded">⬇️ Export RAW</button>
               <button onClick={onExportVrplib} className="text-xs px-3 py-1 bg-yellow-600 text-white rounded">⬇️ Export VRPLIB</button>
             </div>

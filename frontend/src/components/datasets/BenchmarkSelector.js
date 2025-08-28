@@ -13,16 +13,14 @@ import fitToFeatures from '@/components/map/fitToFeatures';
 import { normalizeFleetForBackend } from '@/utils/normalizeFleetForBackend';
 import { haversineMeters } from '@/utils/metrics';
 import { getSolverSpec } from '@/utils/capabilityHelpers';
+import { normalizeInstanceResponse } from '@/utils/normalizeInstance';
+import { buildEuclideanMatrix } from '@/utils/euclideanMatrix';
 
 const stripExt = (n) => String(n || '').replace(/\.[^.]+$/, '');
+const isFiniteNum = (x) => Number.isFinite(Number(x));
+const inWGS84 = (lon, lat) => isFiniteNum(lon) && isFiniteNum(lat) && lon >= -180 && lon <= 180 && lat >= -90 && lat <= 90;
 
-const durationsFromDistances = (distances, speedKph = 40) => {
-  if (!Array.isArray(distances)) return null;
-  const mps = (speedKph * 1000) / 3600;
-  return distances.map(row => row.map(d => Math.round(Number(d || 0) / mps)));
-};
-
-const inferVrpType = (waypoints, vehiclesLike, loadedMeta) => {
+const inferVrpType = (waypoints, vehiclesLike) => {
   const hasTW = waypoints.some(w => Array.isArray(w.timeWindow) && w.timeWindow.length === 2);
   const hasPD = waypoints.some(w => w?.pairId != null);
   const hasDemand = waypoints.some(w => (w?.demand ?? 0) > 0);
@@ -34,6 +32,233 @@ const inferVrpType = (waypoints, vehiclesLike, loadedMeta) => {
   if (hasDemand && hasCap) return 'CVRP';
   return 'TSP';
 };
+
+function median(a) {
+  const b = (a || []).map(Number).filter(Number.isFinite).sort((x, y) => x - y);
+  return b.length ? (b.length % 2 ? b[(b.length - 1) / 2] : (b[b.length / 2 - 1] + b[b.length / 2]) / 2) : 0;
+}
+function estimateSecsPerDist(distances, durations) {
+  const ds = [];
+  const ts = [];
+  if (Array.isArray(distances) && Array.isArray(durations) && distances.length && durations.length) {
+    for (let i = 0; i < Math.min(distances.length, durations.length); i++) {
+      for (let j = 0; j < Math.min(distances[i]?.length || 0, durations[i]?.length || 0); j++) {
+        if (i === j) continue;
+        const d = Number(distances[i][j]), t = Number(durations[i][j]);
+        if (Number.isFinite(d) && Number.isFinite(t) && d > 0 && t > 0) { ds.push(d); ts.push(t); }
+      }
+    }
+  }
+  const md = median(ds), mt = median(ts);
+  return md > 0 ? Math.max(1, Math.round(mt / md)) : 60; // fallback 60 s/unit
+}
+function normalizeServiceTimes(node_service_times, secsPerUnit) {
+  let st = (node_service_times || []).slice();
+  const before = median(st);
+  let action = 'none';
+
+  // If clearly “minutes mistaken as seconds” (e.g., 5400), divide by 60
+  if (before > secsPerUnit * 20) {
+    st = st.map(s => Math.max(0, Math.round(Number(s || 0) / 60)));
+    action = 'divide_by_60';
+  }
+
+  // If uniform >0 value and not close to canonical Solomon 10 units, snap to 10*secsPerUnit
+  const uniq = Array.from(new Set(st.filter(x => x > 0)));
+  if (uniq.length === 1) {
+    const v = uniq[0];
+    const target = 10 * secsPerUnit;
+    if (Math.abs(v - target) > secsPerUnit * 2) {
+      st = st.map(s => (s > 0 ? target : 0));
+      action += (action === 'none' ? '' : '+') + 'snap_to_10u';
+    }
+  }
+  return { st, action, before, after: median(st) };
+}
+
+
+
+/** project arbitrary XY to a ~1.2° box around (0,0) for display */
+function projectXYToLonLat(pointsXY /* [{X,Y}] */) {
+  if (!Array.isArray(pointsXY) || !pointsXY.length) return [];
+  const xs = pointsXY.map(p => p.X), ys = pointsXY.map(p => p.Y);
+  const minX = Math.min(...xs), maxX = Math.max(...xs);
+  const minY = Math.min(...ys), maxY = Math.max(...ys);
+  const w = Math.max(1e-9, maxX - minX), h = Math.max(1e-9, maxY - minY);
+  const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+  const sx = 1.2 / w, sy = 1.2 / h;
+  return pointsXY.map(p => ({ lon: (p.X - cx) * sx, lat: (p.Y - cy) * sy }));
+}
+
+/** detect planar/EUCLIDEAN using meta and XY presence (NOT suppressed by display_lon/lat) */
+function detectPlanar(meta, waypoints) {
+  const fmt = String(meta?.format || '').toLowerCase();
+  if (/solomon|euc_2d|euclidean|vrplib/.test(fmt)) return true;
+  const xyCount = (waypoints || []).filter(w => isFiniteNum(w?.x) && isFiniteNum(w?.y)).length;
+  const n = (waypoints || []).length;
+  return n > 0 && xyCount >= Math.ceil(n * 0.6);
+}
+
+/** choose map display coords and report planar flag */
+function buildDisplayWaypoints(dataWaypoints, fileId, meta) {
+  const n = (dataWaypoints || []).length;
+  const planar = detectPlanar(meta, dataWaypoints);
+
+  const raw = (dataWaypoints || []).map((w, i) => {
+    const dispLon = Number(w.display_lon);
+    const dispLat = Number(w.display_lat);
+    const lon = Number(w.lon);
+    const lat = Number(w.lat);
+    const X = isFiniteNum(w.x) ? Number(w.x) : (isFiniteNum(w.lat) ? Number(w.lat) : NaN);
+    const Y = isFiniteNum(w.y) ? Number(w.y) : (isFiniteNum(w.lon) ? Number(w.lon) : NaN);
+    return {
+      id: w.id ?? String(i),
+      depot: !!w.depot,
+      demand: Number(w.demand ?? 0),
+      service: Number(w.service_time ?? w.serviceTime ?? 0),
+      tw: Array.isArray(w.time_window) ? w.time_window : (w.timeWindow ?? null),
+      dispLon, dispLat, lon, lat, X, Y
+    };
+  });
+
+  let mapCoords = new Array(n);
+  if (planar) {
+    // always project XY for planar datasets (even if display_lon/lat are present)
+    const xy = raw.map(r => ({ X: r.X, Y: r.Y }));
+    mapCoords = projectXYToLonLat(xy);
+  } else {
+    // prefer display lon/lat, else native lon/lat
+    const haveGoodDisplay = raw.every(r => inWGS84(r.dispLon, r.dispLat));
+    const haveGoodLonLat = raw.every(r => inWGS84(r.lon, r.lat));
+    if (haveGoodDisplay) mapCoords = raw.map(r => ({ lon: r.dispLon, lat: r.dispLat }));
+    else if (haveGoodLonLat) mapCoords = raw.map(r => ({ lon: r.lon, lat: r.lat }));
+    else mapCoords = raw.map(() => ({ lon: 0, lat: 0 }));
+  }
+
+  const wp = raw.map((r, i) => ({
+    id: String(r.id),
+    coordinates: [mapCoords[i].lon, mapCoords[i].lat],
+    x: isFiniteNum(r.X) ? Number(r.X) : undefined,
+    y: isFiniteNum(r.Y) ? Number(r.Y) : undefined,
+    fileId,
+    type: r.depot ? 'Depot' : 'Delivery',
+    demand: r.demand,
+    capacity: null,
+    serviceTime: r.service,
+    timeWindow: r.tw,
+    pairId: null
+  }));
+
+  return { wp, planar };
+}
+
+/* ---------------------- NEW: Debug helpers (copy-paste friendly) ---------------------- */
+function offDiagStats(mat) {
+  if (!Array.isArray(mat) || !mat.length) return null;
+  const vals = [];
+  for (let i = 0; i < mat.length; i++) {
+    const row = mat[i] || [];
+    for (let j = 0; j < row.length; j++) {
+      if (i === j) continue;
+      const v = Number(row[j]);
+      if (Number.isFinite(v)) vals.push(v);
+    }
+  }
+  if (!vals.length) return null;
+  vals.sort((a, b) => a - b);
+  const sum = vals.reduce((s, v) => s + v, 0);
+  const mean = sum / vals.length;
+  const mid = Math.floor(vals.length / 2);
+  const median = vals.length % 2 ? vals[mid] : (vals[mid - 1] + vals[mid]) / 2;
+  return {
+    count: vals.length,
+    min: vals[0],
+    max: vals[vals.length - 1],
+    mean,
+    median
+  };
+}
+function tl(mat, k = 10) {
+  if (!Array.isArray(mat)) return null;
+  const n = Math.min(k, mat.length);
+  return Array.from({ length: n }, (_, i) =>
+    Array.from({ length: n }, (_, j) => Number(mat[i]?.[j] ?? 0))
+  );
+}
+function checksum2D(mat) {
+  if (!Array.isArray(mat) || !mat.length) return 0;
+  let s = 0;
+  for (let i = 0; i < mat.length; i++) {
+    const row = mat[i] || [];
+    for (let j = 0; j < row.length; j++) {
+      const v = Number(row[j]);
+      if (Number.isFinite(v)) s += v;
+    }
+  }
+  return Number(s.toFixed(3));
+}
+function guessDurationUnits(dur) {
+  const s = offDiagStats(dur);
+  if (!s) return 'unknown';
+  // crude heuristic: typical Solomon sec-medians are in the 1000s
+  if (s.median >= 300) return 'seconds?';
+  if (s.median >= 10) return 'minutes?';
+  return 'small-units?';
+}
+function buildDebugBundle({
+  dataset, name, solver, adapter, vrpType,
+  depotIndex, planarDetected, matrixSource,
+  waypoints, vehicles, matrix,
+  demands, node_service_times, node_time_windows, vehicle_time_windows
+}) {
+  const n = matrix?.distances?.length || matrix?.durations?.length || 0;
+  const distancesStats = offDiagStats(matrix?.distances);
+  const durationsStats = offDiagStats(matrix?.durations);
+  const durationUnitsGuess = guessDurationUnits(matrix?.durations);
+
+  const coords_sample = (waypoints || []).slice(0, 5).map(w => w.coordinates);
+  const xy_present = (waypoints || []).filter(w => Number.isFinite(w?.x) && Number.isFinite(w?.y)).length;
+
+  const vehicleSummary = (vehicles || []).map(v => ({
+    id: v.id, start: v.start, end: v.end,
+    capacity: Array.isArray(v.capacity) ? v.capacity : []
+  }));
+
+  const bundle = {
+    meta: {
+      dataset, name, solver, adapter, vrpType,
+      depot_index: depotIndex,
+      planar_detected: planarDetected,
+      matrix_source: matrixSource
+    },
+    sizes: {
+      nodes: n,
+      vehicles: (vehicles || []).length,
+      xy_present
+    },
+    coords_sample,
+    vehicles: vehicleSummary,
+    constraints: {
+      demands,
+      node_service_times,
+      node_time_windows,
+      vehicle_time_windows
+    },
+    matrix: {
+      has_distances: Array.isArray(matrix?.distances),
+      has_durations: Array.isArray(matrix?.durations),
+      distances_checksum: Array.isArray(matrix?.distances) ? checksum2D(matrix.distances) : null,
+      durations_checksum: Array.isArray(matrix?.durations) ? checksum2D(matrix.durations) : null,
+      distances_stats_offdiag: distancesStats,
+      durations_stats_offdiag: durationsStats,
+      durations_units_guess: durationUnitsGuess,
+      distances_top_left_10: tl(matrix?.distances, 10),
+      durations_top_left_10: tl(matrix?.durations, 10)
+    }
+  };
+  return bundle;
+}
+/* ------------------------------------------------------------------------------------ */
 
 export default function BenchmarkSelector() {
   // ---- stores / helpers ----
@@ -51,27 +276,31 @@ export default function BenchmarkSelector() {
 
   // local UI state
   const [availableSolvers, setAvailableSolvers] = useState([]);
-  const [solver, setSolver] = useState('pyomo');
+  const [solver, setSolver] = useState('ortools');
   const [adapter, setAdapter] = useState('haversine');
   const [busy, setBusy] = useState(false);
   const [loadedMeta, setLoadedMeta] = useState(null);
+  const [planarDetected, setPlanarDetected] = useState(false);
 
-  const loadedRef = useRef(null);       // { dataset, name, bestKnown }
+  const loadedRef = useRef(null);       // { dataset, name, bestKnown, matrix, depotIndex, format, planar }
   const lastMiniRef = useRef(null);     // mini box values
+
+  // NEW: Keep last debug JSON for quick copy
+  const [lastDebugBundleText, setLastDebugBundleText] = useState('');
 
   // ---- fetch caps for dropdowns ----
   const capsQ = useCapabilities();
   const solverOptions = useMemo(() => {
-    const list = capsQ.data?.solvers || capsQ.data?.data?.solvers || [];
+    const list = capsQ.data?.solvers || [];
     const names = Array.isArray(list) ? list.map(s => s.name) : Object.keys(list || {});
-    // safe defaults
     return names?.length ? names : ['ortools', 'pyomo', 'vroom', 'mapbox_optimizer'];
   }, [capsQ.data]);
 
   const adapterOptions = useMemo(() => {
+    if (planarDetected) return ['euclidean (local)'];
     const names = capsQ.data?.adapters?.map(a => a.name);
-    return names?.length ? names : ['haversine', 'osm_graph', 'openrouteservice', 'google'];
-  }, [capsQ.data]);
+    return names?.length ? names : ['haversine', 'osm_graph', 'openrouteservice', 'google', 'mapbox'];
+  }, [capsQ.data, planarDetected]);
 
   // ---- datasets ----
   const benchmarksQ = useBenchmarks();
@@ -103,26 +332,20 @@ export default function BenchmarkSelector() {
     if (!dataset || !name) return;
     const stem = stripExt(name);
     try {
-      const { data: payload } = await api.get('/benchmarks/load', { params: { dataset, name: stem, compute_matrix: true } });
-      const data = payload?.data;
+      console.debug('[Benchmark] /benchmarks/load', { dataset, name: stem });
+      const payload = await api.get('/benchmarks/load', { params: { dataset, name: stem, compute_matrix: true } }).then(r => r.data);
+      const data = normalizeInstanceResponse(payload);
+
       if (!data?.waypoints?.length) throw new Error('Empty instance');
 
       if (currentFileId) removeWaypointsByFileId?.(currentFileId);
       const fileId = `bench:${dataset}:${stem}:${Date.now()}`;
 
-      // waypoints -> UI
-      const wp = (data.waypoints || []).map((w, i) => ({
-        id: w.id ?? String(i),
-        coordinates: [Number(w.lon), Number(w.lat)],
-        fileId,
-        type: w.depot ? 'Depot' : 'Delivery',
-        demand: w.demand ?? 0,
-        capacity: null,
-        serviceTime: w.service_time ?? 0,
-        timeWindow: Array.isArray(w.time_window) ? w.time_window : null,
-        pairId: null
-      }));
+      // display coords & planar detection
+      const { wp, planar } = buildDisplayWaypoints(data.waypoints, fileId, data?.meta);
       wp.forEach(addWaypoint);
+      setPlanarDetected(planar);
+      if (planar) setAdapter('euclidean (local)'); // force
 
       // fleet
       const vehicles =
@@ -135,7 +358,7 @@ export default function BenchmarkSelector() {
       else if (typeof stFleet.addVehicle === 'function') vehicles.forEach(v => stFleet.addVehicle(v));
 
       // auto VRP type
-      const inferred = inferVrpType(wp, vehicles, data?.meta);
+      const inferred = inferVrpType(wp, vehicles);
       setVrpType(inferred);
 
       // zoom
@@ -151,9 +374,9 @@ export default function BenchmarkSelector() {
 
       setCurrentFileId(fileId);
 
-      // VRP type → filter solvers from caps (handles arrays OR maps)
+      // solver options filtered by VRP type
       const caps = capsQ.data;
-      const raw = (caps?.solvers ?? caps?.data?.solvers);
+      const raw = (caps?.solvers);
       let allSolverNames = [];
       if (Array.isArray(raw)) allSolverNames = raw.map((s) => s?.name ?? String(s));
       else if (raw && typeof raw === 'object') allSolverNames = Object.keys(raw);
@@ -165,14 +388,18 @@ export default function BenchmarkSelector() {
         return vrps.length ? vrps.some(v => v.toUpperCase() === inferred) : true;
       });
 
-      setAvailableSolvers(filtered.length ? filtered : allSolverNames);
-      if (filtered.length) setSolver(filtered[0]);
+      if (filtered.length) {
+        setAvailableSolvers(filtered);
+        setSolver(filtered.includes('ortools') ? 'ortools' : filtered[0]);
+      } else {
+        setAvailableSolvers(allSolverNames);
+      }
 
-
-      // mini-summary meta for the box
+      // mini-summary meta
       const bestKm = data?.best_known_km ?? data?.meta?.best_known_km ?? null;
-      setLoadedMeta({ dataset, name: stem, vrpType: inferred, bestKm, format: data?.meta?.format || null });
+      setLoadedMeta({ dataset, name: stem, vrpType: inferred, bestKm, format: data?.meta?.format || null, planar });
 
+      // remember loader info
       const maybeBest =
         Number(data?.meta?.best_known ?? data?.meta?.bks ?? data?.meta?.opt ?? data?.meta?.objective) ||
         Number(payload?.solution?.objective ?? payload?.solution?.obj) || null;
@@ -180,17 +407,13 @@ export default function BenchmarkSelector() {
       loadedRef.current = {
         dataset, name: stem,
         bestKnown: Number.isFinite(maybeBest) && maybeBest > 0 ? Number(maybeBest) : null,
-        matrix: data?.matrix || null,
+        matrix: data?.matrix || null, // may be dataset-provided (TRUST AS-IS)
         depotIndex: Number.isFinite(data?.depot_index) ? Number(data.depot_index) : 0,
         format: data?.meta?.format || null,
+        planar
       };
 
-      lastMiniRef.current = null;
-
-
-
-      // fetch pair to capture best-known if present
-      let bestKnownMeters = null;
+      // fetch pair for best-known in meters
       try {
         const pair = await api.get('/benchmarks/find', { params: { dataset, name: stem } }).then(r => r.data);
         const b = Number(
@@ -199,23 +422,13 @@ export default function BenchmarkSelector() {
           pair?.solution?.best ??
           NaN
         );
-        if (Number.isFinite(b) && b > 0) bestKnownMeters = b;
-      } catch { }
-
-      setLoadedMeta(prev => ({
-        ...(prev || {}),
-        dataset,
-        name: stem,
-        vrpType: inferred,
-        bestKm: Number.isFinite(bestKnownMeters) ? bestKnownMeters / 1000 : (prev?.bestKm ?? null),
-        // preserve format if we already detected it earlier
-        format: prev?.format ?? (data?.meta?.format ?? null),
-      }));
-
-      // only update bestKnown; keep matrix/depotIndex/format we already stored
-      loadedRef.current = { ...(loadedRef.current || {}), bestKnown: bestKnownMeters };
+        if (Number.isFinite(b) && b > 0) {
+          loadedRef.current.bestKnown = b;
+          setLoadedMeta(prev => ({ ...(prev || {}), bestKm: b / 1000 }));
+        }
+      } catch { /* ignore */ }
     } catch (e) {
-      console.error('Failed to load benchmark instance', e);
+      console.error('[Benchmark] Failed to load benchmark instance', e);
       alert(e?.message || 'Load failed');
     }
   };
@@ -227,6 +440,8 @@ export default function BenchmarkSelector() {
     }
     loadedRef.current = null;
     lastMiniRef.current = null;
+    setPlanarDetected(false);
+    setLastDebugBundleText('');
   };
 
   const onSolveLoaded = async () => {
@@ -236,10 +451,10 @@ export default function BenchmarkSelector() {
       const waypoints = st.waypoints || [];
       if (waypoints.length < 2) throw new Error('Add or load at least 2 waypoints');
 
-      const coords = waypoints.map(w => ({ lon: Number(w.coordinates[0]), lat: Number(w.coordinates[1]) }));
+      const coordsLL = waypoints.map(w => w.coordinates);
       const depotIndex = Number.isFinite(loadedRef.current?.depotIndex) ? loadedRef.current.depotIndex : 0;
 
-      // vehicles
+      // vehicles → ensure >=10 for Solomon-like data
       const { vehicles: backendVehicles } = normalizeFleetForBackend(
         useFleetStore.getState().vehicles,
         { defaultStart: depotIndex, defaultEnd: depotIndex }
@@ -256,192 +471,174 @@ export default function BenchmarkSelector() {
           capacity: Array.isArray(base.capacity) && base.capacity.length ? base.capacity : [200],
         }));
       }
-      // auto VRP type can be re-checked (in case user tweaked fleet)
-      const inferred = inferVrpType(waypoints, vehiclesArr, null);
+      const inferred = inferVrpType(waypoints, vehiclesArr);
       setVrpType(inferred);
 
       const selectedSolver = (solver || 'ortools').toLowerCase();
       const selectedAdapter = (adapter || 'haversine').toLowerCase();
       const selectedVrpType = inferred;
 
-      // OR-Tools / Pyomo path (you can extend later)
-      // before: let dmPayload = { adapter, origins, destinations, ... }
-
-      let dmPayload =
-        selectedAdapter === 'osm_graph'
-          ? {
-            adapter: selectedAdapter,
-            mode: 'driving',
-            parameters: { metrics: ['distance', 'duration'], units: 'm' },
-            coordinates: coords
-          }
-          : {
-            adapter: selectedAdapter,
-            mode: 'driving',
-            parameters: { metrics: ['distance', 'duration'], units: 'm' },
-            origins: coords,
-            destinations: coords
-          };
-      console.debug('[Benchmark] Matrix Payload', dmPayload);
-      // Matrix with ORS 3500-route fallback to haversine
-
-      // Prefer dataset matrix (correct, consistent units) when present
+      // --- MATRIX (keep units CONSISTENT: SECONDS for durations, METERS for distances) ---
       let matrix = loadedRef.current?.matrix || null;
+      let matrixSource = matrix ? 'dataset' : null;
+
       if (!matrix) {
-        let dmPayload = {
-          adapter: selectedAdapter,
-          mode: 'driving',
-          parameters: { metrics: ['distance', 'duration'], units: 'm' },
-          origins: coords,
-          destinations: coords,
-        };
-        // Guard: Mapbox & OSM matrix don't support Solomon planar coords or >25 nodes
-        const looksPlanar = coords.every(c => Math.abs(c.lon) <= 200 && Math.abs(c.lat) <= 200);
-        const tooBigForMbx = coords.length > 25;
-        if (looksPlanar || (selectedAdapter === 'mapbox' && tooBigForMbx)) {
-          // fall back to haversine (or skip adapter entirely)
-          dmPayload = { ...dmPayload, adapter: 'haversine' };
-        }
-        let dmRes;
-        try {
-          dmRes = await dm.mutateAsync(dmPayload);
-        } catch (err) {
-          const msg = String(err?.message || '');
-          if (msg.includes('6004') || /openrouteservice/i.test(msg)) {
-            dmPayload = { ...dmPayload, adapter: 'haversine' };
+        const isPlanar = (loadedRef.current?.planar === true) || planarDetected;
+        if (isPlanar || selectedAdapter === 'euclidean (local)') {
+          const xy = waypoints.map(w => (Number.isFinite(w.x) && Number.isFinite(w.y)) ? [w.x, w.y] : w.coordinates);
+          matrix = buildEuclideanMatrix(xy, { durationsAs: 'seconds', speedKph: 60 }); // ← seconds!
+          matrixSource = 'euclideanMatrix';
+        } else {
+          // adapter call (fallback when not planar)
+          let dmPayload =
+            selectedAdapter === 'osm_graph'
+              ? {
+                adapter: selectedAdapter,
+                mode: 'driving',
+                parameters: { metrics: ['distance', 'duration'], units: 'm' },
+                coordinates: coordsLL.map(([lon, lat]) => ({ lon, lat }))
+              }
+              : {
+                adapter: selectedAdapter,
+                mode: 'driving',
+                parameters: { metrics: ['distance', 'duration'], units: 'm' },
+                origins: coordsLL.map(([lon, lat]) => ({ lon, lat })),
+                destinations: coordsLL.map(([lon, lat]) => ({ lon, lat }))
+              };
+          console.debug('[Benchmark][MatrixSource] Payload', dmPayload);
+          let dmRes;
+          try {
             dmRes = await dm.mutateAsync(dmPayload);
-          } else {
-            throw err;
+          } catch (err) {
+            const msg = String(err?.message || '');
+            if (msg.includes('6004') || /openrouteservice/i.test(msg)) {
+              dmPayload = { ...dmPayload, adapter: 'haversine' };
+              dmRes = await dm.mutateAsync(dmPayload);
+            } else {
+              throw err;
+            }
           }
+          matrix = dmRes?.data?.matrix || dmRes?.matrix;
+          if (!matrix) throw new Error('Matrix failed');
+          matrixSource = dmPayload.adapter || 'adapter';
         }
-        matrix = dmRes?.data?.matrix || dmRes?.matrix;
-        if (!matrix) throw new Error('Matrix failed');
       }
+      console.debug('[MatrixSource] source =', matrixSource);
 
-      if ((selectedVrpType === 'VRPTW' || selectedVrpType === 'PDPTW') && !matrix.durations) {
-        const dur = durationsFromDistances(matrix.distances, 40);
-        if (dur) matrix.durations = dur;   // seconds
-      }
-
+      // Demands (default 1 if none present, except depot)
       const isDepot = (i) => i === depotIndex;
-      // If the instance doesn't specify demands, default to 1 per customer
       const defaultDemandIfMissing = waypoints.some(w => Number(w?.demand) > 0) ? 0 : 1;
-
       const demands = waypoints.map((w, i) =>
         isDepot(i) ? 0 : Number.isFinite(w?.demand) ? Number(w.demand) : defaultDemandIfMissing
       );
 
-
-      // Build VRP fields from *waypoints*
-      let node_service_times = waypoints.map(w => Number(w?.serviceTime || 0));
+      // Node fields (assume SECONDS end-to-end)
+      let node_service_times = waypoints.map(w => Math.max(0, Math.round(Number(w?.serviceTime || 0))));
       let node_time_windows = waypoints.map(w =>
-        Array.isArray(w?.timeWindow) ? w.timeWindow : [0, 24 * 3600]
+        Array.isArray(w?.timeWindow) ? w.timeWindow.map(Number) : [0, 24 * 3600]
       );
 
-      // Ensure vehicles have capacity; fall back to sum of demands if missing
+      // 👉 NEW: normalize Solomon service times using matrix scale
+      const secsPerUnit = estimateSecsPerDist(matrix?.distances, matrix?.durations); // ~60 for your data
+      const norm = normalizeServiceTimes(node_service_times, secsPerUnit);
+      node_service_times = norm.st;
+      if (norm.action !== 'none') {
+        console.warn(`[Benchmark] normalized service times (${norm.action}); median ${norm.before} -> ${norm.after}; secsPerUnit=${secsPerUnit}`);
+      }
+
+      // Clamp TWs, ensure start <= end, widen depot window
+      const INF = 10 ** 9;
+      node_time_windows = node_time_windows.map((tw, i) => {
+        let [a, b] = Array.isArray(tw) ? tw.map(Number) : [0, INF];
+        if (!Number.isFinite(a)) a = 0;
+        if (!Number.isFinite(b)) b = INF;
+        if (b < a) b = a;
+        if (i === depotIndex) { a = 0; b = INF; }
+        return [Math.max(0, Math.round(a)), Math.max(0, Math.round(b))];
+      });
+
+
+      // Make the matrix safe (no negatives; durations at least 1 on off-diagonal)
+      const n = matrix?.distances?.length || matrix?.durations?.length || 0;
+      if (!n) throw new Error('Matrix empty');
+      if (Array.isArray(matrix.distances)) {
+        matrix.distances = matrix.distances.map((row, i) =>
+          row.map((v, j) => (i === j ? 0 : Math.max(0, Number(v) || 0)))
+        );
+      }
+      if (Array.isArray(matrix.durations)) {
+        matrix.durations = matrix.durations.map((row, i) =>
+          row.map((v, j) => (i === j ? 0 : Math.max(1, Math.round(Number(v) || 0))))
+        );
+      }
+
+      // Ensure vehicles have capacity; default to big-enough if missing
       const totalDemand = demands.reduce((s, d) => s + (Number.isFinite(d) ? d : 0), 0);
-      vehiclesArr = (vehiclesArr || []).map((v, i) => {
+      vehiclesArr = vehiclesArr.map(v => {
         const cap = Array.isArray(v?.capacity) ? v.capacity : [];
         const hasCap = cap.some(x => Number(x) > 0);
         return {
           ...v,
           start: (v.start ?? depotIndex),
           end: (v.end ?? depotIndex),
-          capacity: hasCap ? cap : [Math.max(totalDemand, waypoints.length)] // safe large
+          capacity: hasCap ? cap : [Math.max(totalDemand, waypoints.length)]
         };
       });
 
-      // ── Solomon-specific normalization: file gives seconds, our matrix is in "Solomon units" ──
-      const fmt = String(loadedRef.current?.format || loadedMeta?.format || '').toLowerCase();
-      const looksSolomon = fmt.includes('solomon');
-      const manyTWAreSec = node_time_windows.filter(([a, b]) =>
-        Number.isFinite(a) && Number.isFinite(b) && a >= 3600 && b >= 3600 && a % 60 === 0 && b % 60 === 0
-      ).length > node_time_windows.length * 0.7;
-      const serviceLooksSec = node_service_times.filter(s =>
-        Number.isFinite(s) && s >= 3600 && s % 60 === 0
-      ).length > node_service_times.length * 0.7;
+      // Adapter label by matrix source
+      const adapterLabel =
+        matrixSource === 'euclideanMatrix' ? 'euclidean (local)' :
+          matrixSource === 'dataset' ? 'dataset' :
+            selectedAdapter;
 
-      if (looksSolomon && (manyTWAreSec || serviceLooksSec)) {
-        console.debug('[Harmonize:Solomon] dividing TW & service_time by 60');
-        node_service_times = node_service_times.map(s => Math.round(Number(s) / 60));
-        node_time_windows = node_time_windows.map(([a, b]) => [Math.round(Number(a) / 60), Math.round(Number(b) / 60)]);
-      }
+      // ---------- NEW: Build + log copy-pasteable debug bundle ----------
+      const debugBundle = buildDebugBundle({
+        dataset: loadedRef.current?.dataset, name: loadedRef.current?.name,
+        solver: selectedSolver, adapter: adapterLabel, vrpType: selectedVrpType,
+        depotIndex, planarDetected: (loadedRef.current?.planar === true) || planarDetected,
+        matrixSource,
+        waypoints,
+        vehicles: vehiclesArr,
+        matrix,
+        demands,
+        node_service_times,
+        node_time_windows,
+        vehicle_time_windows: Array.from({ length: vehiclesArr.length }, () => [0, 1e9]),
+      });
+      const debugJSON = JSON.stringify(debugBundle, null, 2);
+      setLastDebugBundleText(debugJSON);
+      console.log('===== BEGIN BENCH_DEBUG =====\n' + debugJSON + '\n===== END BENCH_DEBUG =====');
+      console.debug('[Benchmark][DEBUG_BUNDLE_OBJECT]', debugBundle);
+      // ------------------------------------------------------------------
 
-      // ── Unit harmonizer (mutually exclusive): make TW/service and durations consistent ──
-      // Compute current stats
-      const flatDur = Array.isArray(matrix?.durations)
-        ? matrix.durations.flat().filter(Number.isFinite)
-        : [];
-      const maxDur = flatDur.length ? Math.max(...flatDur) : 0;
-      const maxService = node_service_times.length ? Math.max(...node_service_times) : 0;
-      const twWidths = node_time_windows.map(([a, b]) => (Number(b) - Number(a))).filter(Number.isFinite);
-      const minTWwidth = twWidths.length ? Math.min(...twWidths) : 0;
-
-      // Case A: TW/service are ~60× larger than durations -> TW/service were seconds, durations minutes
-      const twBigger = maxDur > 0 && ((maxService / maxDur) > 10 || (minTWwidth / maxDur) > 10);
-      // Case B: durations are ~60× larger than TW/service -> durations are seconds, TW/service minutes
-      const durBigger = (Math.max(maxService, minTWwidth) > 0) && (maxDur / Math.max(1, maxService, minTWwidth) > 10);
-
-      if (twBigger && !durBigger) {
-        console.debug('[Harmonize] scaling TW/service_time down by 60 to match durations (minutes)');
-        node_service_times = node_service_times.map(s => Math.round(Number(s) / 60));
-        node_time_windows = node_time_windows.map(([a, b]) => [Math.round(Number(a) / 60), Math.round(Number(b) / 60)]);
-      } else if (durBigger) {
-        console.debug('[Harmonize] scaling matrix.durations down by 60 to match TW/service (minutes)');
-        matrix = {
-          ...matrix,
-          durations: matrix.durations.map(row => row.map(v => Math.round(Number(v) / 60)))
-        };
-      }
-
-      // Sanity after harmonization (optional)
-      const flatDur2 = Array.isArray(matrix?.durations) ? matrix.durations.flat().filter(Number.isFinite) : [];
-      const maxDur2 = flatDur2.length ? Math.max(...flatDur2) : 0;
-      const maxService2 = node_service_times.length ? Math.max(...node_service_times) : 0;
-      const minTWwidth2 = node_time_windows.map(([a, b]) => b - a).filter(Number.isFinite).reduce((m, v) => Math.min(m, v), Infinity);
-      console.debug('[Sanity-After] maxDur', maxDur2, 'maxService', maxService2, 'minTWwidth', minTWwidth2);
-
-      // Start payload
+      // Build solver payload (SECONDS)
       const payload = {
-        solver: selectedSolver,                // 'ortools' | 'pyomo' | 'vroom' | ...
+        solver: selectedSolver,
         depot_index: depotIndex,
         fleet: vehiclesArr,
         weights: { distance: 1, time: 0 },
         matrix
       };
-
-      // Attach VRP-specific bits
-      if (demands.some(d => d > 0)) payload.demands = demands; // capacity matters for C101 (VRPTW)
+      if (demands.some(d => d > 0)) payload.demands = demands;
       if (selectedVrpType === 'VRPTW' || selectedVrpType === 'PDPTW') {
         payload.node_service_times = node_service_times;
         payload.node_time_windows = node_time_windows;
       }
       if (selectedVrpType === 'PDPTW') payload.demands = demands;
+
+      // vehicle time windows: keep wide by default
+      if (!payload.vehicle_time_windows) {
+        payload.vehicle_time_windows = Array.from({ length: vehiclesArr.length }, () => [0, 1e9]);
+      }
+
+      console.debug('[Benchmark][Units] payload uses SECONDS time; METERS distance');
       console.debug('[Benchmark] Solver Payload', payload);
-
-      const _flatDur = matrix?.durations?.flat?.().filter(Number.isFinite) ?? [];
-      const _twWidths = node_time_windows.map(([a, b]) => (b - a)).filter(Number.isFinite);
-      console.debug('[Sanity]', {
-        maxDur: _flatDur.length ? Math.max(..._flatDur) : 0,
-        maxService: node_service_times.length ? Math.max(...node_service_times) : 0,
-        minTWwidth: _twWidths.length ? Math.min(..._twWidths) : 0
-      });
-
-      console.debug('[Units]', {
-        duration_unit_guess: durBigger ? 'seconds->minutes (scaled)' : 'minutes',
-        maxDur: Math.max(...(matrix.durations.flat?.() ?? [0])),
-        maxService: Math.max(...node_service_times),
-        minTWwidth: Math.min(...node_time_windows.map(([a, b]) => b - a))
-      });
-
       const solveRes = await solve.mutateAsync(payload);
 
-      console.debug('[Benchmark] Solver Response', solveRes);
-      // our distance via waypoint order (fallback to geometry later)
+      // compute simple total meters from route IDs
       const ids =
         solveRes?.data?.routes?.[0]?.waypoint_ids ||
         solveRes?.routes?.[0]?.waypoint_ids || [];
-      const coordsLL = waypoints.map(w => w.coordinates);
       let ourMeters = 0;
       if (Array.isArray(ids) && ids.length >= 2) {
         for (let i = 1; i < ids.length; i++) {
@@ -458,25 +655,25 @@ export default function BenchmarkSelector() {
 
       addSolution(solveRes, waypoints, {
         solver: selectedSolver,
-        adapter: selectedAdapter,
+        adapter: adapterLabel,
         vrpType: selectedVrpType,
         benchmark: bench.dataset && bench.name ? { dataset: bench.dataset, name: bench.name } : undefined,
         comparison,
         bestKnownKm: Number.isFinite(bench?.bestKnown) ? (bench.bestKnown / 1000) : (loadedMeta?.bestKm ?? null),
-        vehicles: vehiclesArr,        // <-- lets UI compute emissions/cost if solver didn't
+        vehicles: vehiclesArr,
         id: `bench-${Date.now()}`,
       });
 
-      // mini box
+      // mini box cache
       lastMiniRef.current = {
         dataset: bench.dataset, name: bench.name,
-        solver: selectedSolver, adapter: selectedAdapter, vrpType: selectedVrpType,
+        solver: selectedSolver, adapter: adapterLabel, vrpType: selectedVrpType,
         bestKnown: best ?? null,
         ourKm: (ourMeters / 1000),
         gap: comparison ? comparison.gap : null,
       };
     } catch (e) {
-      console.error('Benchmark solve failed', e);
+      console.error('[Benchmark] solve failed', e);
       alert(e?.message || 'Solve failed');
     } finally {
       setBusy(false);
@@ -569,10 +766,28 @@ export default function BenchmarkSelector() {
               Clear loaded
             </button>
           )}
+          {/* NEW: Copy last debug bundle */}
+          {lastDebugBundleText && (
+            <button
+              onClick={async () => {
+                try {
+                  await navigator.clipboard.writeText(lastDebugBundleText);
+                  alert('Debug bundle copied to clipboard ✅');
+                } catch {
+                  // Fallback: open a prompt for manual copy
+                  window.prompt('Copy debug bundle:', lastDebugBundleText);
+                }
+              }}
+              className="text-xs px-2 py-0.5 bg-emerald-700 text-white rounded"
+              title="Copy the most recent BENCH_DEBUG JSON"
+            >
+              📋 Copy debug bundle
+            </button>
+          )}
         </div>
       </div>
 
-      {/* Solver/Adapter (after list) */}
+      {/* Solver/Adapter */}
       <div className="mt-2 grid grid-cols-2 gap-2">
         <div>
           <label className="block text-xs font-medium mb-1">Solver</label>
@@ -592,6 +807,7 @@ export default function BenchmarkSelector() {
             className="w-full p-1 border rounded text-sm"
             value={adapter}
             onChange={e => setAdapter(e.target.value)}
+            disabled={planarDetected}
           >
             {(adapterOptions?.length ? adapterOptions : ['haversine', 'openrouteservice', 'osm_graph', 'mapbox']).map(a => (
               <option key={a} value={a}>{a}</option>
@@ -600,13 +816,15 @@ export default function BenchmarkSelector() {
         </div>
       </div>
 
-      {/* Mini summary & Solve button */}
+      {/* Mini summary */}
       {loadedMeta && (
         <div className="mt-2 text-xs p-2 rounded border bg-gray-800">
           <div><strong>Benchmark:</strong> {loadedMeta.dataset}/{loadedMeta.name}</div>
           <div><strong>Type:</strong> {loadedMeta.vrpType}</div>
+          {loadedMeta.planar && <div><strong>Coords:</strong> planar (euclidean)</div>}
           {Number.isFinite(loadedMeta.bestKm) && <div><strong>Best-known:</strong> {loadedMeta.bestKm.toFixed(2)} km</div>}
         </div>
-      )}    </Section>
+      )}
+    </Section>
   );
 }

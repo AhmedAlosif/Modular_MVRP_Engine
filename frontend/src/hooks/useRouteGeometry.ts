@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { coordsFromAnyGeometry } from '@/utils/routeGeometry';
 import useRouteStore from '@/hooks/useRouteStore';
-import { useRenderSettingsStore } from '@/hooks/useRenderSettingsStore';
+import useRenderSettingsStore from '@/hooks/useRenderSettingsStore';
 import { getGeometryWithCache } from '@/utils/routeGeometry';
 import api from '@/api/api';
 
@@ -37,7 +37,6 @@ export function useRouteGeometry(
 
     const profile = options?.profile ?? 'driving';
     const osrmUrl = options?.osrmUrl ?? storeOsrm ?? (process.env.NEXT_PUBLIC_OSRM_URL || 'https://router.project-osrm.org');
-    // IMPORTANT: no /api prefix; these go to backend baseURL via axios client
 
     const apiBase =
         (api?.defaults?.baseURL?.replace(/\/+$/, '') || process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8000')
@@ -46,13 +45,10 @@ export function useRouteGeometry(
     const backendMapboxEndpoint = options?.backendMapboxEndpoint ?? `${apiBase}/mapbox/match`;
     const backendGeometryEndpoint = options?.backendGeometryEndpoint ?? `${apiBase}/route/geometry`;
 
-    const baseSource = options?.source ?? storeSource ?? 'auto';
-    const adapter = route?.raw?.adapter as string | undefined;
-
-    // If the route already has geometry from a non-haversine adapter, don't override it in 'auto' mode.
     const effectiveSource: Provider = options?.source ?? storeSource ?? 'auto';
-
+    const adapter = route?.raw?.adapter as string | undefined;
     const coords = useMemo(() => dedupeLoop(route?.coords || []), [route?.coords]);
+    const coordsKey = useMemo(() => JSON.stringify(coords), [coords]);
 
     const [state, setState] = useState<{
         status: Status;
@@ -60,8 +56,8 @@ export function useRouteGeometry(
         provider: Provider | null;
         error?: string;
     }>({ status: 'idle', coords: null, provider: null });
+    const lastOkKey = useRef<string | null>(null);
 
-    // stale guard
     const reqId = useRef(0);
 
     useEffect(() => {
@@ -75,21 +71,21 @@ export function useRouteGeometry(
             return;
         }
 
-        const myId = ++reqId.current;
-        setState({ status: 'loading', coords: null, provider: null });
+    const myId = ++reqId.current;
+    // Only go to 'loading' if these coords are actually new
+    setState(prev => {
+        if (prev.status === 'ok' && lastOkKey.current === coordsKey) return prev;
+        return { status: 'loading', coords: null, provider: null };
+    });
 
-        // axios can be aborted with AbortSignal (axios v1+)
-        const p0 = profile.split('-')[0] as 'driving' | 'walking' | 'cycling'; // 'driving-traffic' → 'driving'
+        const p0 = profile.split('-')[0] as 'driving' | 'walking' | 'cycling';
 
         const fetchByProvider = (prov: Exclude<Provider, 'auto' | 'none'>) => {
             return getGeometryWithCache(async ({ signal }) => {
                 if (prov === 'backend') {
-                    // Build a small list of candidates to handle both setups:
-                    //   - FastAPI at /route/geometry
-                    //   - FastAPI behind Next at /api/route/geometry
                     const base = (api?.defaults?.baseURL || '').replace(/\/$/, '');
                     const candidates = Array.from(new Set([
-                        backendGeometryEndpoint,                     // whatever was injected
+                        backendGeometryEndpoint,
                         `${base}/route/geometry`,
                         `${base}/api/route/geometry`,
                         '/route/geometry',
@@ -119,12 +115,11 @@ export function useRouteGeometry(
                     }
                     throw new Error(`backend geometry failed (${String(last)})`);
                 }
+
                 if (prov === 'mapbox') {
-                    // POST /mapbox/match via api.js (baseURL :8000)
                     const res = await api.post(
                         backendMapboxEndpoint,
-                        { coordinates: coords, profile: p0, geometries: 'geojson', tidy: true },
-                        { signal }
+                        { coordinates: coords, profile: p0, geometries: 'geojson', tidy: true }
                     );
                     const j = res?.data;
                     const c =
@@ -136,10 +131,9 @@ export function useRouteGeometry(
                     return c || [];
                 }
 
-                // OSRM stays direct (public or custom server)
                 const path = coords.map(c => `${c[0]},${c[1]}`).join(';');
                 const url = `${osrmUrl.replace(/\/+$/, '')}/route/v1/${p0}/${path}?overview=full&geometries=geojson`;
-                const r = await fetch(url, { cache: 'no-store', signal });
+                const r = await fetch(url, { cache: 'no-store' });
                 if (!r.ok) throw new Error(`osrm ${r.status}`);
                 const j = await r.json();
                 const c = j?.routes?.[0]?.geometry?.coordinates || [];
@@ -171,13 +165,15 @@ export function useRouteGeometry(
                     throw new Error('No geometry in response');
                 } catch (e: any) {
                     lastErr = e?.message || String(e);
-                    disabledProviders.add(prov); // back off for this session
+                    disabledProviders.add(prov);
+                    console.warn('[RouteGeom] backoff provider', prov, lastErr);
                 }
             }
 
-            if (reqId.current !== myId) return; // stale
+            if (reqId.current !== myId) return;
 
             if (snapped) {
+                console.debug('[RouteGeom] geometry ok', { provider: picked, n: snapped.length });
                 setState({ status: 'ok', coords: snapped, provider: picked! });
             } else {
                 setState({ status: 'error', coords: null, provider: null, error: lastErr || 'Geometry fetch failed' });
@@ -187,14 +183,15 @@ export function useRouteGeometry(
         const runSingle = async (prov: Exclude<Provider, 'auto' | 'none'>) => {
             try {
                 const c = await fetchByProvider(prov);
-                if (reqId.current !== myId) return; // stale
+                if (reqId.current !== myId) return;
                 if (Array.isArray(c) && c.length >= 2) {
+                    console.debug('[RouteGeom] geometry ok', { provider: prov, n: c.length });
                     setState({ status: 'ok', coords: c, provider: prov });
                 } else {
                     setState({ status: 'error', coords: null, provider: null, error: 'No geometry in response' });
                 }
             } catch (e: any) {
-                if (reqId.current !== myId) return; // stale
+                if (reqId.current !== myId) return;
                 setState({ status: 'error', coords: null, provider: null, error: e?.message || String(e) });
             }
         };
@@ -212,13 +209,13 @@ export function useRouteGeometry(
         osrmUrl,
         backendGeometryEndpoint,
         backendMapboxEndpoint,
-        // deps for coords (stable stringify to avoid thrash)
-        useMemo(() => JSON.stringify(coords), [coords])
+        coordsKey   // ← only the stable key
     ]);
 
-    // Reflect into the route store only when we have a usable geometry
     useEffect(() => {
         if (state.status !== 'ok' || !state.coords || state.coords.length < 2) return;
+        // Remember we’ve satisfied this geometry key
+        lastOkKey.current = coordsKey;
         useRouteStore.setState(s => {
             const next = Array.isArray(s.routes) ? [...s.routes] : [];
             const idx = s.currentIndex ?? 0;
@@ -226,7 +223,7 @@ export function useRouteGeometry(
             next[idx] = { ...next[idx], displayCoords: state.coords, displayProvider: state.provider };
             return { routes: next };
         });
-    }, [state.status, state.coords, state.provider]);
+    }, [state.status, state.coords, state.provider, coordsKey]);
 
     return state;
 }

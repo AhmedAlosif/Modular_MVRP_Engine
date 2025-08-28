@@ -1,4 +1,3 @@
-// components/solver/SolverPanel.js
 'use client';
 import { useEffect, useMemo } from 'react';
 import Section from '@/components/sidebar/Section';
@@ -7,7 +6,6 @@ import useUiStore from '@/hooks/useUIStore';
 import useWaypointStore from '@/hooks/useWaypointStore';
 import useFleetStore from '@/hooks/useFleetStore';
 import { evaluateRequirements, getVrpSpec, getSolverSpec } from '@/utils/capabilityHelpers';
-// If your file is at /components/SolveButton.js, import it directly:
 import SolveButton from '@/components/vrp/SolveButton';
 
 export default function SolverPanel() {
@@ -34,24 +32,23 @@ export default function SolverPanel() {
     [caps]
   );
 
-  // include the correct mapbox solver id the button expects:
   const solverOptions = solverNamesFromCaps ?? ['ortools', 'pyomo', 'vroom', 'mapbox_optimizer'];
 
   const solverSpec = useMemo(() => getSolverSpec(caps, solverEngine), [caps, solverEngine]);
-  const vrpTypes = useMemo(() => Object.keys(solverSpec?.vrp_types || {}), [solverSpec]);
-
-  // snap vrpType if invalid for chosen solver
+  const vrpTypes = useMemo(() => {
+    const keys = Object.keys(solverSpec?.vrp_types || {});
+    return keys.length ? keys : (vrpType ? [vrpType] : []);
+  }, [solverSpec, vrpType]);
   useEffect(() => {
     if (solverSpec && !solverSpec.vrp_types?.[vrpType] && vrpTypes.length) {
+      console.debug('[SolverPanel] snap VRP type ->', vrpTypes[0]);
       setVrpType(vrpTypes[0]);
     }
   }, [solverSpec, vrpType, vrpTypes, setVrpType]);
 
-  // Minimal ctx for requirement lights
   const ctx = useMemo(() => ({
     depotIndex: 0,
     waypoints,
-    // accept both {vehicles:[...]} and [...] per capabilityHelpers
     fleet: { vehicles: fleet },
     demands: waypoints.map(w => w.demand ?? 0),
     node_time_windows: waypoints.map(w => Array.isArray(w.timeWindow) ? w.timeWindow : null),
@@ -60,20 +57,22 @@ export default function SolverPanel() {
     weights: null,
   }), [waypoints, fleet]);
 
-  const reqChecks = useMemo(
-    () => evaluateRequirements(caps, solverEngine, vrpType, ctx),
-    [caps, solverEngine, vrpType, ctx]
-  );
+  const reqChecks = useMemo(() => {
+    try { return evaluateRequirements(caps, solverEngine, vrpType, ctx); }
+    catch { return []; }
+  }, [caps, solverEngine, vrpType, ctx]);
 
-  // Split required vs optional purely for display (if you want separate sections)
   const spec = useMemo(() => getVrpSpec(caps, solverEngine, vrpType), [caps, solverEngine, vrpType]);
-  const required = spec?.required ?? [];
   const optional = spec?.optional ?? [];
 
-  const optChecks = useMemo(
-    () => evaluateRequirements(optional, ctx),
-    [optional, ctx]
-  );
+  const optChecks = useMemo(() => {
+    if (!Array.isArray(optional) || !optional.length) return [];
+    try { return evaluateRequirements({ rules: optional }, solverEngine, vrpType, ctx); }
+    catch {
+      try { return evaluateRequirements(optional, ctx); }
+      catch { return []; }
+    }
+  }, [optional, solverEngine, vrpType, ctx]);
 
   return (
     <Section title="🧠 Solver">
@@ -82,7 +81,7 @@ export default function SolverPanel() {
       <select
         className="w-full border rounded p-1 text-sm mb-2"
         value={solverEngine}
-        onChange={(e) => setSolverEngine(e.target.value)}
+        onChange={(e) => { console.debug('[SolverPanel] set solver', e.target.value); setSolverEngine(e.target.value); }}
       >
         {solverOptions.map(n => <option key={n} value={n}>{n}</option>)}
       </select>
@@ -92,7 +91,7 @@ export default function SolverPanel() {
       <select
         className="w-full border rounded p-1 text-sm mb-2"
         value={vrpType}
-        onChange={(e) => setVrpType(e.target.value)}
+        onChange={(e) => { console.debug('[SolverPanel] set vrpType', e.target.value); setVrpType(e.target.value); }}
       >
         {vrpTypes.map(t => <option key={t} value={t}>{t}</option>)}
       </select>
@@ -102,7 +101,7 @@ export default function SolverPanel() {
       <select
         className="w-full border rounded p-1 text-sm mb-2"
         value={routingAdapter}
-        onChange={(e) => setRoutingAdapter(e.target.value)}
+        onChange={(e) => { console.debug('[SolverPanel] set adapter', e.target.value); setRoutingAdapter(e.target.value); }}
       >
         {adapters.map(a => <option key={a} value={a}>{a}</option>)}
       </select>
@@ -136,11 +135,7 @@ export default function SolverPanel() {
 
       {/* Solve */}
       <div className="mt-2">
-        <SolveButton
-          solver={solverEngine}
-          adapter={routingAdapter}
-          vrpType={vrpType}
-        />
+        <SolveButton />
       </div>
     </Section>
   );

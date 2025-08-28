@@ -25,7 +25,7 @@ import { createLassoLayer } from '@/components/mapbox/layers/createLassoLayer';
 import { createEtaController } from '@/components/mapbox/layers/etaLayer';
 
 mapboxgl.accessToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN || '';
-const MAP_STYLE = 'mapbox://styles/mapbox/streets-v12';
+const MAP_STYLE = 'mapbox://styles/mapbox/navigation-night-v1';
 
 // ───────── helpers (shared with MapLibre) ─────────
 function haversineMeters([lon1, lat1], [lon2, lat2]) {

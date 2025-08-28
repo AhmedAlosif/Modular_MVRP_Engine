@@ -1,20 +1,18 @@
-# VRP Studio — Monorepo (Frontend + Backend)
+# Modular MVRP Engine (Frontend + Backend)
 
-A full‑stack playground for **Vehicle Routing Problems (VRP)**.  
-It includes a **Next.js** frontend for map‑based experimentation and a **FastAPI** backend
-with modular distance‑matrix adapters and multiple solvers (**OR‑Tools**, **Pyomo**, **VROOM**) plus
-benchmark loaders and emissions enrichment.
+A full-stack playground for **Vehicle Routing Problems (VRP)**.
+It includes a **Next.js** frontend for map-based experimentation and a **FastAPI** backend with modular distance-matrix adapters and multiple solvers (**OR-Tools**, **Pyomo**, **VROOM**) plus benchmark loaders and emissions enrichment.
 
 ---
 
 ## Highlights
 
-- ✨ **Multiple solvers**: OR‑Tools (TSP/CVRP/VRPTW/PDPTW), Pyomo (CVRPTW via CBC), VROOM (coord/index; NN fallback), and a Mapbox Optimizer proxy.
-- 🧭 **Distance‑matrix adapters**: `haversine` (offline), `openrouteservice` (online; optional key). Pluggable design.
-- 🗺️ **Frontend**: Waypoint editing, fleet configuration, benchmarking, ETA overlays, traffic gradient, animated trips.
-- 🧪 **Testing**: `pytest` for backend; `vitest`/`playwright` for frontend.
-- 🧩 **Datasets**: Solomon TXT, VRP‑Set‑XML100, CSV/GeoJSON helpers.
-- 🧱 **Modular**: Clean registries for adapters & solvers; easy to extend.
+* ✨ **Multiple solvers**: OR-Tools (TSP/CVRP/VRPTW/PDPTW), Pyomo (CVRPTW via CBC), VROOM (coord/index; NN fallback), and a Mapbox Optimizer proxy.
+* 🧭 **Distance-matrix adapters**: `haversine` (offline), `openrouteservice` (online; optional key), and a **local `euclidean` (planar XY)** for benchmark/planar datasets.
+* 🗺️ **Frontend**: Waypoint editing, fleet configuration, benchmarking, ETA overlays, traffic gradient, animated trips, clustering, lasso/BBox selection.
+* 🧩 **Datasets**: Solomon TXT, VRP-Set-XML100 (VRPLIB), CSV/GeoJSON helpers.
+* 🧪 **Testing**: `pytest` for backend; `vitest`/`playwright` for frontend.
+* 🧱 **Modular**: Clean registries for adapters & solvers; easy to extend.
 
 ---
 
@@ -28,27 +26,32 @@ benchmark loaders and emissions enrichment.
 │   ├── services/            # adapters & solvers + metrics
 │   ├── models/              # Pydantic schemas
 │   ├── data/                # (optional) datasets root
-│   └── doc/                 # deep backend docs
+│   └── doc/                 # backend docs / dev notes
 ├── frontend/                # Next.js application (map UI)
 │   ├── src/                 # components, hooks, utils, pages/routes
 │   └── public/              # static assets
-├── tests/                   # cross‑cutting E2E or shared fixtures (optional)
-├── README.md                # ← you are here
-└── ...                      # tool configs (.env, lint, etc.)
+├── docs/                    # reports, appendices, diagrams (recommended)
+│   └── REPORT.md            # main report; see Appendix A — Task Log (at end)
+├── tests/                   # cross-cutting E2E or shared fixtures (optional)
+└── README.md                # ← you are here
 ```
+
+> **Academic note:** Place your report at `docs/REPORT.md`. Put **“Appendix A — Task Log”** **at the very end** of that file, and reference it once in the body (e.g., at the end of “Detailed Tasks”).
 
 ---
 
 ## Quickstart (Local Dev)
 
 ### Prerequisites
-- **Python 3.10+**
-- **Node 18+ / pnpm or npm**
-- (Optional) **Docker** for containerized runs
-- Map token (optional): `NEXT_PUBLIC_MAPBOX_TOKEN` (frontend features)
-- ORS key (optional): `ORS_API_KEY` (backend OpenRouteService adapter)
+
+* **Python 3.10+**
+* **Node 18+** (or newer) with **npm** or **pnpm**
+* (Optional) **Docker** for containerized runs
+* Map token (optional): `NEXT_PUBLIC_MAPBOX_TOKEN` (frontend)
+* ORS key (optional): `ORS_API_KEY` (backend OpenRouteService adapter)
 
 ### 1) Backend (FastAPI)
+
 ```bash
 cd backend
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
@@ -61,29 +64,43 @@ uvicorn main:app --reload            # http://127.0.0.1:8000/docs
 ```
 
 ### 2) Frontend (Next.js)
+
 ```bash
 cd frontend
 npm i
-# copy your env and set the API base if frontend and backend are on different hosts/ports
-# e.g., echo "NEXT_PUBLIC_API_BASE=http://127.0.0.1:8000" >> .env.local
-#       echo "NEXT_PUBLIC_MAPBOX_TOKEN=..." >> .env.local
-npm run dev                           # http://127.0.0.1:3000
+# If the API runs on a different host/port:
+echo "NEXT_PUBLIC_API_BASE=http://127.0.0.1:8000" >> .env.local
+# Optional maps:
+echo "NEXT_PUBLIC_MAPBOX_TOKEN=..." >> .env.local
+
+npm run dev                          # http://127.0.0.1:3000
 ```
 
-> Frontend expects the API at `NEXT_PUBLIC_API_BASE` (default `/` if proxied).
+> The frontend reads `NEXT_PUBLIC_API_BASE` (default `/` if proxied).
 
 ---
 
 ## Configuration
 
 ### Backend env
-- `DATA_DIR` — datasets root (default: `./backend/data`)
-- `ORS_API_KEY` — OpenRouteService adapter access (optional)
-- `GOOGLE_MAPS_API_KEY` — only if Google adapter is enabled (optional)
+
+* `DATA_DIR` — datasets root (default: `./backend/data`)
+* `ORS_API_KEY` — OpenRouteService adapter access (optional)
+* `GOOGLE_MAPS_API_KEY` — only if a Google adapter is enabled (optional)
 
 ### Frontend env
-- `NEXT_PUBLIC_API_BASE` — base URL for the backend (e.g., `http://127.0.0.1:8000`)
-- `NEXT_PUBLIC_MAPBOX_TOKEN` — Mapbox token for map/optimizer routing (optional but recommended)
+
+* `NEXT_PUBLIC_API_BASE` — base URL for the backend (e.g., `http://127.0.0.1:8000`)
+* `NEXT_PUBLIC_MAPBOX_TOKEN` — Mapbox token for map/optimizer routing (optional but recommended)
+
+---
+
+## Benchmarks & Datasets
+
+* **Benchmarks**: Load **Solomon** or **VRPLIB XML100** via the UI **Benchmark Selector** (frontend) or backend `/benchmarks/*` endpoints.
+
+  * Planar datasets (e.g., Solomon XY) can use **Adapter: “euclidean (local)”** to avoid network-distance bias.
+* **Custom datasets**: Upload CSV/GeoJSON/Solomon TXT via the UI **Custom Datasets** panel or backend `/files/*` endpoints.
 
 ---
 
@@ -107,28 +124,46 @@ build:
 ## Testing
 
 **Backend**
+
 ```bash
 cd backend
 pytest -q
 ```
 
 **Frontend**
+
 ```bash
 cd frontend
 npm run test
-# e2e (optional)
+# e2e (optional):
 npm run test:e2e
 ```
 
 ---
 
+## Troubleshooting
+
+* **OR-Tools** `ROUTING_INVALID / status=4`
+
+  * Ensure the **distance matrix is square**, diagonal zeros, and **durations** are present for TW models.
+  * For Solomon-style inputs, normalize units (meters/seconds internally) and **prefer “euclidean (local)”** for planar XY.
+  * Verify **depot index**, **non-negative demands**, and **vehicle capacities** (≥ total demand or large safe default).
+* **VROOM** “Inconsistent delivery length … fallback NN used”
+
+  * `demand` must be **number\[]**; `time_window` must be **{start,end} (seconds)**, not arrays.
+* **Geometry doesn’t match**
+
+  * Choose a geometry source in **Route Tools** (`auto/backend/mapbox/osrm/none`). The UI prefers persisted `displayCoords`.
+
+---
+
 ## Roadmap (selected)
 
-- Unified “Search” bar with dual providers (forward & reverse geocoding) that adds waypoints.
-- Data Manager: multi‑format import (auto‑detect), de‑dupe, tagging, export controls.
-- VRP Factors: auto‑balance presets, complexity & region detection, solver auto‑suggest.
-- Real‑world datasets: place + bbox harvesting; save & export.
-- Gap analysis & benchmark comparison UX polish.
+* Unified Search bar (dual geocoders, fwd/rev) with “add waypoint”.
+* Data Manager: multi-format import (auto-detect), de-dupe, tagging, export.
+* VRP Factors: auto-balance & presets, complexity/region detectors, auto-suggest.
+* Real-world datasets: place + bbox harvesting; save/export.
+* Gap analysis & benchmark comparison UX polish.
 
 See **Issues** for the living plan.
 
@@ -136,7 +171,7 @@ See **Issues** for the living plan.
 
 ## Contributing
 
-See **[backend/doc/contributing.md](backend/doc/contributing.md)** for style and PR guidelines.  
+See **[backend/doc/contributing.md](backend/doc/contributing.md)** for style and PR guidelines.
 
 ---
 
@@ -148,6 +183,6 @@ MIT
 
 ## Acknowledgements
 
-- Google OR‑Tools, Pyomo, CBC/GLPK, VROOM team
-- OpenRouteService & Mapbox for routing/matrix APIs
-- Deck.gl / MapLibre / Mapbox GL communities
+* Google OR-Tools, Pyomo, CBC/GLPK, VROOM team
+* OpenRouteService & Mapbox for routing/matrix APIs
+* deck.gl / MapLibre / Mapbox GL communities

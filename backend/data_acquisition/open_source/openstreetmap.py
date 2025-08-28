@@ -1,107 +1,120 @@
+# backend/data_acquisition/open_source/openstreetmap.py
+from __future__ import annotations
 import time
 from typing import Iterable, List, Optional, Tuple, Dict, Any
-from OSMPythonTools.overpass import Overpass, overpassQueryBuilder
-from OSMPythonTools.nominatim import Nominatim
-from OSMPythonTools.element import Element
+import requests
 
 DEFAULT_TIMEOUT = 120
-RATE_LIMIT_SLEEP = 1.0  # seconds between calls
+RATE_LIMIT_SLEEP = 0.8  # friendly pause
 
-nominatim = Nominatim()
-overpass = Overpass()
+OVERPASS_MIRRORS = [
+    "https://overpass.kumi.systems/api/interpreter",
+    "https://lz4.overpass-api.de/api/interpreter",
+    "https://overpass-api.de/api/interpreter",
+]
+
+NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 
 def _sleep():
     time.sleep(RATE_LIMIT_SLEEP)
 
-def city_to_area_id(city: str) -> int:
-    _sleep()
-    res = nominatim.query(city)
-    area_id = res.areaId()
-    if area_id is None:
-        raise ValueError(f"Could not resolve areaId for city: {city}")
-    return area_id
-
-def query_overpass_raw(query: str, *, timeout: int = DEFAULT_TIMEOUT, date: Optional[str] = None):
-    _sleep()
-    return overpass.query(query, timeout=timeout, date=date)
+def _post_overpass(ql: str, *, timeout: int = DEFAULT_TIMEOUT) -> Dict[str, Any]:
+    last_err: Exception | None = None
+    for url in OVERPASS_MIRRORS:
+        _sleep()
+        try:
+            r = requests.post(url, data={"data": ql}, timeout=timeout + 10, headers={"User-Agent": "vrp-tool/1.0"})
+            if r.status_code in (429, 502, 503, 504):
+                last_err = RuntimeError(f"{url} -> {r.status_code} {r.text[:200]}")
+                continue
+            r.raise_for_status()
+            return r.json()
+        except Exception as e:
+            last_err = e
+            continue
+    print("\n--- Overpass QL (FAILED) ---\n", ql, "\n----------------------------\n", flush=True)
+    raise RuntimeError(f"overpass_error: {last_err}")
 
 def _build_selector(key: str, value: str, regex: bool = False) -> str:
-    """
-    Build the selector part for overpassQueryBuilder.
-    - equality: "key"="value"
-    - regex:    "key"~"pattern"
-    - existence (value == "*"): "key"
-    Also supports passing value starting with '~' (e.g. '~restaurant|cafe').
-    """
-    if value == "*":
+    if value is None:
+        value = ""
+    v = str(value).strip()
+
+    # existence
+    if v == "*":
         return f'"{key}"'
-    if regex or value.startswith("~"):
-        pattern = value[1:] if value.startswith("~") else value
-        pattern = pattern.strip('"')
-        return f'"{key}"~"{pattern}"'
-    return f'"{key}"="{value}"'
+
+    use_rx = regex or v.startswith("~")
+    if v.startswith("~"):
+        v = v[1:].strip()
+
+    # strip surrounding quotes
+    if len(v) >= 2 and v[0] == v[-1] and v[0] in ('"', "'"):
+        v = v[1:-1]
+
+    # escape for QL
+    v = v.replace("\\", "\\\\").replace('"', r"\"")
+
+    return (f'"{key}"~"{v}"') if use_rx else (f'"{key}"="{v}"')
 
 def _normalize_key_value(key: str, value: str) -> tuple[str, str]:
-    """
-    Opinionated tweaks to reduce 'empty' results caused by common tag misunderstandings.
-    """
-    # Map amenity=bus_stop -> highway=bus_stop
     if key == "amenity" and value == "bus_stop":
         return "highway", "bus_stop"
     return key, value
 
-def build_query_nodes_by_tag(
-    *,
-    area_id: Optional[int] = None,
-    bbox: Optional[Tuple[float, float, float, float]] = None,  # (south, west, north, east)
-    key: str,
-    value: str,
-    out: str = "body",
-    regex: bool = False,
-):
-    if (area_id is None) == (bbox is None):
-        raise ValueError("Provide exactly one of area_id or bbox.")
+def _elements_to_fc(doc: Dict[str, Any]) -> Dict[str, Any]:
+    feats: List[Dict[str, Any]] = []
+    for el in doc.get("elements", []):
+        etype = el.get("type")
+        props = dict(el.get("tags", {}) or {})
+        props["__osm_type"] = etype
+        props["__id"] = el.get("id")
 
-    key, value = _normalize_key_value(key, value)
-    selector = _build_selector(key, value, regex=regex)
+        lon = lat = None
+        if etype == "node":
+            lon = el.get("lon")
+            lat = el.get("lat")
+        else:
+            c = el.get("center") or {}
+            lon = c.get("lon")
+            lat = c.get("lat")
 
-    return overpassQueryBuilder(
-        area=area_id,
-        bbox=bbox,
-        elementType="node",
-        selector=selector,
-        out=out,
-    )
-
-def fetch_nodes_by_tag(
-    *,
-    area_id: Optional[int] = None,
-    bbox: Optional[Tuple[float, float, float, float]] = None,
-    key: str,
-    value: str,
-    timeout: int = DEFAULT_TIMEOUT,
-    regex: bool = False,
-) -> List[Element]:
-    query = build_query_nodes_by_tag(area_id=area_id, bbox=bbox, key=key, value=value, regex=regex)
-    res = query_overpass_raw(query, timeout=timeout)
-    return res.elements()
-
-def elements_to_geojson_features(elements: Iterable[Element]) -> List[Dict[str, Any]]:
-    features: List[Dict[str, Any]] = []
-    for el in elements:
-        lat = el.lat()
-        lon = el.lon()
-        if lat is None or lon is None:
+        if lon is None or lat is None:
             continue
-        features.append({
+        feats.append({
             "type": "Feature",
             "geometry": {"type": "Point", "coordinates": [float(lon), float(lat)]},
-            "properties": el.tags() or {},
+            "properties": props,
         })
-    return features
+    return {"type": "FeatureCollection", "features": feats}
 
-def feature_collection(features: List[Dict[str, Any]]) -> Dict[str, Any]:
-    return {"type": "FeatureCollection", "features": features}
+# ---------- Nominatim (place -> bbox) ----------
+
+def place_to_bbox(place: str) -> Tuple[float, float, float, float]:
+    """
+    Resolve 'City, Country' (etc.) to (south, west, north, east) bbox using Nominatim.
+    """
+    _sleep()
+    r = requests.get(
+        NOMINATIM_URL,
+        params={"q": place, "format": "jsonv2", "limit": 1, "addressdetails": 0},
+        headers={"User-Agent": "vrp-tool/1.0"},
+        timeout=20,
+    )
+    r.raise_for_status()
+    arr = r.json()
+    if not isinstance(arr, list) or not arr:
+        raise RuntimeError(f"Nominatim: place not found: {place}")
+    bb = arr[0].get("boundingbox")
+    # boundingbox is [south, north, west, east] as strings
+    if not (isinstance(bb, list) and len(bb) == 4):
+        raise RuntimeError(f"Nominatim: invalid bbox for {place}")
+    south = float(bb[0]); north = float(bb[1]); west = float(bb[2]); east = float(bb[3])
+    return (south, west, north, east)
+
+# ------------------------------
+#  Public helpers (same names)
+# ------------------------------
 
 def nodes_by_tag_in_bbox(
     bbox: Tuple[float, float, float, float],
@@ -110,11 +123,19 @@ def nodes_by_tag_in_bbox(
     *,
     regex: bool = False,
     timeout: int = DEFAULT_TIMEOUT,
+    limit: Optional[int] = None,
 ) -> Dict[str, Any]:
-    elements = fetch_nodes_by_tag(bbox=bbox, key=key, value=value, regex=regex, timeout=timeout)
-    return feature_collection(elements_to_geojson_features(elements))
-
-# Optional: by-place helpers
+    (south, west, north, east) = bbox
+    key, value = _normalize_key_value(key, value)
+    sel = _build_selector(key, value, regex=regex)
+    lim = f" {int(limit)}" if isinstance(limit, int) and limit > 0 else ""
+    ql = f"""
+[out:json][timeout:{timeout}];
+node[{sel}]({south},{west},{north},{east});
+out body qt{lim};
+"""
+    doc = _post_overpass(ql, timeout=timeout)
+    return _elements_to_fc(doc)
 
 def nodes_by_tag_in_place(
     place: str,
@@ -123,10 +144,10 @@ def nodes_by_tag_in_place(
     *,
     regex: bool = False,
     timeout: int = DEFAULT_TIMEOUT,
+    limit: Optional[int] = None,
 ) -> Dict[str, Any]:
-    area_id = city_to_area_id(place)
-    elements = fetch_nodes_by_tag(area_id=area_id, key=key, value=value, regex=regex, timeout=timeout)
-    return feature_collection(elements_to_geojson_features(elements))
+    bbox = place_to_bbox(place)
+    return nodes_by_tag_in_bbox(bbox, key, value, regex=regex, timeout=timeout, limit=limit)
 
 def pois_by_tag_in_place(
     place: str,
@@ -137,39 +158,30 @@ def pois_by_tag_in_place(
     include_relations: bool = True,
     regex: bool = False,
     timeout: int = DEFAULT_TIMEOUT,
+    limit: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
-    Fetch nodes (always) and optionally way/relations (as centroids) for a place.
+    Use bbox of the place and query n/w/r in one go; centers returned for ways/relations.
     """
-    area_id = city_to_area_id(place)
+    (south, west, north, east) = place_to_bbox(place)
 
-    # Build raw QL because overpassQueryBuilder is limited for union queries
-    selector = _build_selector(*_normalize_key_value(key, value), regex=regex)
-    area_clause = f"area:{area_id}"
+    key, value = _normalize_key_value(key, value)
+    sel = _build_selector(key, value, regex=regex)
+    lim = f" {int(limit)}" if isinstance(limit, int) and limit > 0 else ""
 
-    parts = [f'node[{selector}]({area_clause});']
+    parts = ["node[{sel}]({s},{w},{n},{e});".format(sel=sel, s=south, w=west, n=north, e=east)]
     if include_ways:
-        parts.append(f'way[{selector}]({area_clause});')
+        parts.append("way[{sel}]({s},{w},{n},{e});".format(sel=sel, s=south, w=west, n=north, e=east))
     if include_relations:
-        parts.append(f'relation[{selector}]({area_clause});')
+        parts.append("relation[{sel}]({s},{w},{n},{e});".format(sel=sel, s=south, w=west, n=north, e=east))
 
+    union = "\n  ".join(parts)
     ql = f"""
 [out:json][timeout:{timeout}];
 (
-  {"".join(parts)}
+  {union}
 );
-out center tags;
+out tags center qt{lim};
 """
-    res = query_overpass_raw(ql, timeout=timeout)
-    feats: List[Dict[str, Any]] = []
-    for el in res.elements():
-        lat = el.lat() or el.centerLat()
-        lon = el.lon() or el.centerLon()
-        if lat is None or lon is None:
-            continue
-        feats.append({
-            "type": "Feature",
-            "geometry": {"type": "Point", "coordinates": [float(lon), float(lat)]},
-            "properties": el.tags() or {},
-        })
-    return feature_collection(feats)
+    doc = _post_overpass(ql, timeout=timeout)
+    return _elements_to_fc(doc)

@@ -208,8 +208,11 @@ export default function MapLibreComponent() {
   const {
     hoveredFeature, setHoveredFeature, clearHoveredFeature,
     addOnClickEnabled, drawBBoxEnabled, setDrawBBoxEnabled,
-    lastBbox, setLastBbox, etasEnabled, trafficEnabled, setTrafficEnabled
+    lastBbox, setLastBbox,
+    etasEnabled,              // ← this is the one RouteToolsPanel toggles
+    trafficEnabled, setTrafficEnabled
   } = useUiStore();
+  const etasOn = !!etasEnabled;
 
   // where the display geometry should come from
   const geometrySource =
@@ -248,11 +251,30 @@ export default function MapLibreComponent() {
   useEffect(() => { if (lassoOn && drawBBoxEnabled) setDrawBBoxEnabled(false); }, [lassoOn, drawBBoxEnabled, setDrawBBoxEnabled]);
   useEffect(() => { if (drawBBoxEnabled && lassoOn) setLassoOn(false); }, [drawBBoxEnabled, lassoOn]);
 
-  // route accessor + version ping
+  // Active renderable route (first leg of the active RUN)
   const getActiveRoute = useCallback(() => {
-    const rs = useRouteStore.getState();
-    return rs?.routes?.[rs.currentIndex] || null;
+    const st = useRouteStore.getState();
+    const run = st?.routes?.[st.currentIndex] || null;   // "routes" mirror holds RUNS
+    if (!run) return null;
+    const legs = Array.isArray(run.routes) ? run.routes : [];
+    const leg = legs[0] || run;
+
+    const wps = useWaypointStore.getState().waypoints || [];
+    const byIdx = new Map(wps.map((w, i) => [String(i), w.coordinates]));
+    let coords = Array.isArray(leg.coords) && leg.coords.length ? leg.coords : [];
+    if (!coords.length) {
+      const ids = Array.isArray(leg.waypointIds) ? leg.waypointIds
+        : Array.isArray(leg.waypoint_ids) ? leg.waypoint_ids
+          : Array.isArray(leg.raw?.waypoint_ids) ? leg.raw.waypoint_ids
+            : [];
+      coords = ids.map(id => {
+        const n = Number(id);
+        return Number.isFinite(n) ? byIdx.get(String(n)) : null;
+      }).filter(Boolean);
+    }
+    return { ...leg, coords, raw: leg.raw || run.raw };
   }, []);
+
   const [routeVer, setRouteVer] = useState(0);
   useEffect(() => {
     const u = useRouteStore.subscribe(() => setRouteVer(v => v + 1));
@@ -274,17 +296,6 @@ export default function MapLibreComponent() {
     backendMapboxEndpoint: '/mapbox/match'
   });
 
-  // Persist chosen geometry for the active run into the store
-  useEffect(() => {
-    if (geomStatus !== 'ok' || !Array.isArray(snappedCoords) || snappedCoords.length < 2) return;
-    useRouteStore.setState(s => {
-      const next = Array.isArray(s.routes) ? [...s.routes] : [];
-      const idx = Number.isInteger(s.currentIndex) ? s.currentIndex : 0;
-      if (!next[idx]) return s;
-      next[idx] = { ...next[idx], displayCoords: snappedCoords, displayProvider: geomProvider };
-      return { routes: next };
-    });
-  }, [geomStatus, snappedCoords, geomProvider]);
 
   // handy console helper
   useEffect(() => {
@@ -525,14 +536,18 @@ export default function MapLibreComponent() {
 
   // routes → ensure coords
   const routesForRender = useMemo(() => {
-    if (!Array.isArray(routes) || routes.length === 0) return [];
-    const byIdx = new (globalThis.Map)(wps.map((w, i) => [String(i), w.coordinates]));
-    return routes.map((r, i) => {
+    const run = Array.isArray(routes) ? routes[currentIndex] : null;
+    const legs = Array.isArray(run?.routes) ? run.routes : [];
+    if (!legs.length) return [];
+    const byIdx = new Map(wps.map((w, i) => [String(i), w.coordinates]));
+    return legs.map((r) => {
       // 1) ensure solver coords from waypoint ids if missing
       let coords = Array.isArray(r.coords) && r.coords.length ? r.coords : [];
       if (!coords.length) {
         const ids = Array.isArray(r.waypointIds) ? r.waypointIds
-          : Array.isArray(r.raw?.waypoint_ids) ? r.raw.waypoint_ids : [];
+          : Array.isArray(r.waypoint_ids) ? r.waypoint_ids
+            : Array.isArray(r.raw?.waypoint_ids) ? r.raw.waypoint_ids
+              : [];
         coords = ids.map(id => {
           const n = Number(id);
           return Number.isFinite(n) ? byIdx.get(String(n)) : null;
@@ -540,13 +555,15 @@ export default function MapLibreComponent() {
       }
 
       // 2) base fallback: try decode/geojson from raw when available
-      let displayCoords = null;
-      try {
-        displayCoords = coordsFromRawGeometry(r.raw) || coordsFromRawGeometry(r) || null;
-      } catch { }
+      let displayCoords = Array.isArray(r?.displayCoords) && r.displayCoords.length >= 2 ? r.displayCoords : null;
+      if (!displayCoords) {
+        try {
+          displayCoords = coordsFromRawGeometry(r.raw) || coordsFromRawGeometry(r) || null;
+        } catch { }
+      }
 
-      // 3) active route override: prefer hook result (provider path)
-      if (i === (currentIndex ?? 0) && Array.isArray(snappedCoords) && snappedCoords.length > 1) {
+      // if the hook has snapped geometry, use it
+      if (Array.isArray(snappedCoords) && snappedCoords.length > 1) {
         displayCoords = snappedCoords;
       }
 
@@ -581,16 +598,37 @@ export default function MapLibreComponent() {
     return firstSymbol?.id;
   }, [mapLoaded]);
 
-  const currentR = routesForRender?.[currentIndex];
+  const currentR = routesForRender?.[0];
   const overlayCoords =
     (Array.isArray(currentR?.displayCoords) && currentR.displayCoords.length >= 2)
       ? currentR.displayCoords
       : (Array.isArray(currentR?.coords) && currentR.coords.length >= 2
         ? currentR.coords
         : null);
-  const routeOverlay = (mapLoaded && map && overlayCoords)
-    ? <RouteLayer map={map} coords={overlayCoords} layerBeforeId={labelLayerId} />
+
+  // after computing overlayCoords & geomProvider
+  const routeOverlay = (mapLoaded && map && overlayCoords && showRoute)
+    ? <RouteLayer
+      key={`route-${currentIndex}-${geomProvider}-${overlayCoords.length}`}
+      map={map}
+      coords={overlayCoords}
+      layerBeforeId={labelLayerId}
+    />
     : null;
+
+
+  // Auto-fit when we actually have something to draw
+  useEffect(() => {
+    if (!mapLoaded || !map || !overlayCoords || overlayCoords.length < 2) return;
+    const lons = overlayCoords.map(c => c[0]);
+    const lats = overlayCoords.map(c => c[1]);
+    try {
+      map.fitBounds([[Math.min(...lons), Math.min(...lats)], [Math.max(...lons), Math.max(...lats)]],
+        { padding: 60, duration: 500 });
+    } catch { }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mapLoaded, overlayCoords && overlayCoords.length]);
+
 
   // DEBUG helpers (off)
   const DEBUG = false;
@@ -652,7 +690,10 @@ export default function MapLibreComponent() {
   }, [lastBbox]);
 
   const routeDots = useMemo(() => {
-    const r = routesForRender?.[currentIndex];
+    const r = routesForRender?.[0] || {};
+    const coords = (Array.isArray(r?.displayCoords) && r.displayCoords.length > 1)
+      ? r.displayCoords
+      : (Array.isArray(r?.coords) ? r.coords : []);
     if (!r?.coords?.length) return null;
     return new ScatterplotLayer({
       id: 'route-vertex-dots',
@@ -671,8 +712,10 @@ export default function MapLibreComponent() {
   }, [lassoOn, waypoints, setLastBbox]);
 
   const etaTextLayer = useMemo(() => {
+    if (!etasOn) return null;
     const route = getActiveRoute();
-    const coords = route?.coords, times = route?.etaEpoch, idxs = route?.etaIndices;
+    const coords = overlayCoords; // use the displayed polyline
+    const times = route?.etaEpoch, idxs = route?.etaIndices;
     if (!Array.isArray(coords) || !Array.isArray(times) || !Array.isArray(idxs)) return null;
     if (coords.length < 2 || times.length === 0 || idxs.length === 0) return null;
     const data = idxs.map((vi, k) => ({
@@ -698,7 +741,15 @@ export default function MapLibreComponent() {
       opacity: dim,
       parameters: { depthTest: false }
     });
-  }, [routeVer, getActiveRoute, solo]);
+  }, [etasOn, routeVer, overlayCoords, getActiveRoute, solo]);
+
+  useEffect(() => {
+    const m = mapRef.current?.getMap?.();
+    if (m) {
+      window.__getMap = () => m;
+    }
+  }, [mapLoaded]);
+
 
   // Trips (animated)
   // robust RAF that can't double-start & stops at end
@@ -964,16 +1015,16 @@ export default function MapLibreComponent() {
   ]);
 
   // traffic
-  // traffic
   const trafficCtlRef = useRef(null);
   useEffect(() => {
     const map = mapRef.current?.getMap?.();
     if (!map || !mapLoaded) return;
 
-    const r = routesForRender?.[currentIndex] || {};
-    const coords = Array.isArray(r?.displayCoords) && r.displayCoords.length
-      ? r.displayCoords
-      : (Array.isArray(r?.coords) ? r.coords : []);
+    const r = routesForRender?.[0] || {};
+    const coords =
+      (Array.isArray(r?.displayCoords) && r.displayCoords.length > 1)
+        ? r.displayCoords
+        : (Array.isArray(r?.coords) ? r.coords : []);
     const opacity = solo && solo !== 'traffic' ? 0.15 : 0.6;
 
     if (!trafficEnabled || coords.length < 2) {
@@ -982,11 +1033,10 @@ export default function MapLibreComponent() {
       return;
     }
 
-    // Build gradient only if ETAs align with the chosen geometry
-    let gradientStops = null;
-    if (Array.isArray(r?.etaRelative) && r.etaRelative.length === coords.length) {
-      gradientStops = buildGradientStops(coords, r.etaRelative, 16);
-    }
+    const gradientStops =
+      (Array.isArray(r?.etaRelative) && r.etaRelative.length === coords.length)
+        ? buildGradientStops(coords, r.etaRelative, 16)
+        : null;
 
     const line = {
       type: 'Feature',
@@ -1003,23 +1053,22 @@ export default function MapLibreComponent() {
         opacity,
         offset: 3,
         dashArray: [2, 1],
-        solidColor: '#00FFFF',            // fallback
+        solidColor: '#00FFFF',
         useGradient: !!gradientStops,
         gradientStops,
       });
       trafficCtlRef.current.setOpacity(opacity);
-      console.debug('[traffic] diagnostics after add:', trafficCtlRef.current.diagnostics());
     } else {
       trafficCtlRef.current.update(line, { gradientStops });
       trafficCtlRef.current.setOpacity(opacity);
-      console.debug('[traffic] diagnostics after update:', trafficCtlRef.current.diagnostics());
     }
 
     return () => {
       trafficCtlRef.current?.remove();
       trafficCtlRef.current = null;
     };
-  }, [mapLoaded, trafficEnabled, solo, routesForRender, currentIndex]);
+  }, [mapLoaded, trafficEnabled, solo, currentIndex, overlayCoords?.length]);
+
 
   // native ETA glyphs
   const etaCtlRef = useRef(null);
@@ -1034,7 +1083,7 @@ export default function MapLibreComponent() {
       return run?.coords || [];
     };
 
-    if (!etasEnabled) { etaCtlRef.current?.remove(); etaCtlRef.current = null; return; }
+    if (!etasOn) { etaCtlRef.current?.remove(); etaCtlRef.current = null; return; }
 
     const coords = getCoords();
     if (coords.length < 2) { etaCtlRef.current?.remove(); etaCtlRef.current = null; return; }
@@ -1052,7 +1101,7 @@ export default function MapLibreComponent() {
     });
 
     return () => { try { u && u(); } catch { } etaCtlRef.current?.remove(); etaCtlRef.current = null; };
-  }, [etasEnabled, etaEveryMeters, etaSpeedKmh, mapLoaded, solo]);
+  }, [etasOn, etaEveryMeters, etaSpeedKmh, mapLoaded, solo]);
 
   // render
   const initialView = storeView || { longitude: -73.985, latitude: 40.758, zoom: 12, bearing: 0, pitch: 0 };

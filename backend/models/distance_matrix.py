@@ -1,17 +1,68 @@
-from typing import Literal, List, Dict, Optional
-from pydantic import BaseModel
+from typing import List, Dict, Optional, Any
+from pydantic import BaseModel, root_validator, validator
 
 class Coordinate(BaseModel):
     lat: float
     lon: float
 
+def _coerce_coords(raw: Any) -> List[Dict[str, float]]:
+    """
+    Accept:
+      - [{lat,lon}, ...]
+      - [[lon,lat], ...]  (also tolerates [lat,lon] and swaps via heuristic)
+    Return: list of {lon, lat} dicts.
+    """
+    out: List[Dict[str, float]] = []
+    if raw is None:
+        return out
+    for item in raw:
+        if isinstance(item, dict) and 'lat' in item and 'lon' in item:
+            out.append({'lat': float(item['lat']), 'lon': float(item['lon'])})
+        elif isinstance(item, (list, tuple)) and len(item) >= 2:
+            a = float(item[0]); b = float(item[1])
+            # Heuristic swap if the first looks like lat and the second like lon
+            # (lat in [-90,90], lon in [-180,180])
+            if abs(a) <= 90 and abs(b) > 90:
+                a, b = b, a
+            out.append({'lon': a, 'lat': b})
+        else:
+            raise ValueError(f'Bad coordinate item: {item!r}')
+    return out
+
 class MatrixRequest(BaseModel):
-    # Used by /distance-matrix endpoint (adapters)
+    # Adapter & mode are free-form strings (no Literal)
     adapter: str
-    origins: List[Coordinate]
-    destinations: List[Coordinate]
-    mode: Literal["driving", "walking", "cycling"]
-    parameters: Optional[Dict] = None
+    mode: str = 'driving'
+    parameters: Optional[Dict[str, Any]] = None
+
+    # You may send either origins+destinations, or a single coordinates array
+    origins: Optional[List[Coordinate]] = None
+    destinations: Optional[List[Coordinate]] = None
+    coordinates: Optional[List[Coordinate]] = None
+
+    @root_validator(pre=True)
+    def fill_and_coerce(cls, values: Dict[str, Any]) -> Dict[str, Any]:
+        # Coerce any incoming coord shapes BEFORE field validation
+        for key in ('origins', 'destinations', 'coordinates'):
+            if key in values and values[key] is not None:
+                values[key] = _coerce_coords(values[key])
+
+        # If only `coordinates` was provided, use it for both O & D
+        if (values.get('origins') is None or values.get('destinations') is None) and values.get('coordinates'):
+            values['origins'] = values.get('origins') or values['coordinates']
+            values['destinations'] = values.get('destinations') or values['coordinates']
+
+        # If still missing, raise (matches your old “Field required” but with clearer text)
+        if values.get('origins') is None or values.get('destinations') is None:
+            raise ValueError('origins and destinations are required (or provide coordinates)')
+        return values
+
+    @validator('origins', 'destinations', pre=False)
+    def non_empty(cls, v: List[Coordinate]) -> List[Coordinate]:
+        if not v or len(v) < 1:
+            raise ValueError('must contain at least 1 coordinate')
+        return v
+    
 
 class MatrixResult(BaseModel):
     # Used by /solver/solve endpoint (solvers)

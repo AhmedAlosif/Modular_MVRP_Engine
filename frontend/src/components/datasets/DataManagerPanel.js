@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import Section from '@/components/sidebar/Section';
 import useVrpStore from '@/hooks/useVRPStore';
 import FileUpload from '@/components/data/FileUpload';
@@ -15,12 +15,56 @@ import {
 import fitToFeatures from '@/components/map/fitToFeatures';
 import useMapStore from '@/hooks/useMapStore';
 
+/**
+ * Tagging Truth Table (no duplication / idempotent)
+ *
+ * Given features have `properties.tags` as array (unique):
+ *
+ * 1) Tag only
+ *    - before: []          + add "A" → ["A"]
+ * 2) Re-tag same selection
+ *    - before: ["A"]       + add "A" → ["A"]            (no duplicates)
+ * 3) Assign new tag and remove previous
+ *    - before: ["A"]       + replace "A"→"B" → ["B"]
+ * 4) Bulk tag remove
+ *    - before: ["A","B"]   + remove "A" → ["B"]
+ * 5) Mixed file IDs
+ *    - only fileId matches are updated
+ *
+ * See helper `applyTagOperationToFileFeatures` and the inline quick-test at bottom.
+ */
+
+function uniquePush(arr, v) {
+    const s = new Set(arr || []);
+    s.add(v);
+    return [...s];
+}
+function removeFrom(arr, v) {
+    return (arr || []).filter(x => x !== v);
+}
+
+function applyTagOperationToFileFeatures(file, op) {
+    if (!file?.data?.features?.length) return file;
+    const nextFeatures = file.data.features.map((f) => {
+        const p = { ...(f.properties || {}) };
+        const tags = Array.isArray(p.tags) ? p.tags.slice() : [];
+        if (op.type === 'add') {
+            p.tags = uniquePush(tags, op.tag);
+        } else if (op.type === 'remove') {
+            p.tags = removeFrom(tags, op.tag);
+        } else if (op.type === 'replace') {
+            p.tags = uniquePush(removeFrom(tags, op.from), op.to);
+        }
+        return { ...f, properties: p };
+    });
+    return { ...file, data: { ...file.data, features: nextFeatures } };
+}
+
 export default function DataManagerPanel() {
     const {
         GeojsonFiles,
         removeGeojsonFile,
-        setGeojsonFiles,
-        /* zoomToFile, */ // ❌ not needed anymore for Mapbox
+        // setGeojsonFiles, // not required; we'll update via getState/ setState to avoid render-time mutation
         toggleFileVisibility,
         addGeojsonFile
     } = useVrpStore();
@@ -34,7 +78,9 @@ export default function DataManagerPanel() {
     });
 
     const waypoints = useWaypointStore((s) => s.waypoints);
-    const vehicles = useFleetStore?.((s) => s.vehicles) ?? []; // optional if you have it
+    const vehicles = (typeof useFleetStore === 'function'
+        ? useFleetStore((s) => s.vehicles)
+        : []);
 
     const toFeatureCollection = (file) => {
         if (!file) return null;
@@ -47,7 +93,7 @@ export default function DataManagerPanel() {
         const files = useVrpStore.getState().GeojsonFiles;
 
         const wpFeatures = waypointsToFeatures(waypoints);
-        const vehFeatures = vehiclesToFeatures(vehicles /*, optional depot [lng,lat] */);
+        const vehFeatures = vehiclesToFeatures(vehicles);
 
         const all = collectAllFeatures({
             importedFiles: files,
@@ -55,14 +101,12 @@ export default function DataManagerPanel() {
             vehicleFeatures: vehFeatures,
         });
 
-        // Filter by exportType
         let featuresToExport = all;
         if (exportType === 'waypoints') {
             featuresToExport = all.filter((f) => f?.properties?._featureType === 'waypoint');
         } else if (exportType === 'vehicles') {
             featuresToExport = all.filter((f) => f?.properties?._featureType === 'vehicle');
         } else if (exportType === 'layers') {
-            // "map layers" = anything not waypoint/vehicle
             featuresToExport = all.filter(
                 (f) =>
                     f?.properties?._featureType !== 'waypoint' &&
@@ -74,8 +118,42 @@ export default function DataManagerPanel() {
     };
 
     const handleRemove = (fileId) => {
+        console.debug('[DataMgr] remove file', fileId);
         removeGeojsonFile(fileId);
         removeWaypointsByFileId(fileId);
+    };
+
+    // Simple tagging UI (applies to one file at a time)
+    const [tagTargetFileId, setTagTargetFileId] = useState('');
+    const [tagInput, setTagInput] = useState('');
+    const [replaceFrom, setReplaceFrom] = useState('');
+    const [replaceTo, setReplaceTo] = useState('');
+
+    const selectedFile = useMemo(
+        () => GeojsonFiles.find(f => String(f.id) === String(tagTargetFileId)) || null,
+        [GeojsonFiles, tagTargetFileId]
+    );
+
+    const runTagOp = (op) => {
+        if (!selectedFile) return;
+        queueMicrotask(() => {
+            // mutate via setState to avoid render-time updates
+            useVrpStore.setState((s) => {
+                const list = s.GeojsonFiles.map((f) =>
+                    String(f.id) === String(selectedFile.id) ? applyTagOperationToFileFeatures(f, op) : f
+                );
+                return { GeojsonFiles: list };
+            });
+            console.debug('[DataMgr] tag op', op);
+        });
+    };
+
+    // Quick zoom helper
+    const setViewState = useMapStore(s => s.setViewState);
+    const zoomTo = (file) => {
+        const fc = toFeatureCollection(file);
+        if (!fc?.features?.length) return;
+        fitToFeatures(fc.features, { setViewState });
     };
 
     return (
@@ -121,14 +199,12 @@ export default function DataManagerPanel() {
                 <FileUpload importOptions={importOptions} />
 
                 {GeojsonFiles.length === 0 ? (
-                    <div> </div>
+                    <div className="text-xs text-gray-500">No imported files yet.</div>
                 ) : (
                     GeojsonFiles.map((file) => (
                         <div key={file.id} className="p-2 border rounded mb-1">
-                            {/* File Name */}
                             <div className="font-medium text-sm">{file.name}</div>
 
-                            {/* File Type Tags */}
                             <div className="flex gap-2 text-xs text-gray-600 mt-1">
                                 {(file.fileTypes ?? ['unknown']).map((type, i) => (
                                     <span
@@ -148,63 +224,84 @@ export default function DataManagerPanel() {
                                 ))}
                             </div>
 
-                            {/* Action Buttons */}
-                            <div className="flex space-x-2 mt-2 text-sm">
+                            <div className="flex flex-wrap gap-2 mt-2 text-sm">
                                 <button onClick={() => toggleFileVisibility(file.id)}>
                                     👁 {file.visible ? 'Hide' : 'Show'}
                                 </button>
                                 <button onClick={() => handleRemove(file.id)}>🗑 Remove</button>
-
-                                {/* ✅ FIXED: Zoom uses fitToFeatures → camera bus (works for Mapbox and MapLibre) */}
                                 <button
-                                    onClick={() => {
-                                        const fc =
-                                            file?.data?.type === 'FeatureCollection'
-                                                ? file.data
-                                                : { type: 'FeatureCollection', features: file?.features ?? [] };
-
-                                        console.debug('[DM] Zoom clicked', {
-                                            fileId: file.id,
-                                            name: file.name,
-                                            features: fc?.features?.length ?? 0,
-                                            firstGeom: fc?.features?.[0]?.geometry?.type
-                                        });
-                                        console.debug('[DM] mapStore id', useMapStore.getState().__id);
-
-                                        // 1) Try the bus (preferred)
-                                        fitToFeatures(fc, { padding: 80, duration: 700 });
-
-                                        // 2) Fallback directly to map if bus isn't wired
-                                        const map = typeof window !== 'undefined' ? window.__vrpMap : null;
-                                        if (map && fc?.features?.length) {
-                                            // compute bounds locally
-                                            let west = Infinity, south = Infinity, east = -Infinity, north = -Infinity;
-                                            const extend = (c) => {
-                                                if (!c) return; const [lng, lat] = c; if (!isFinite(lng) || !isFinite(lat)) return;
-                                                west = Math.min(west, lng); east = Math.max(east, lng); south = Math.min(south, lat); north = Math.max(north, lat);
-                                            };
-                                            fc.features.forEach((f) => {
-                                                const g = f?.geometry; if (!g) return;
-                                                if (g.type === 'Point') extend(g.coordinates);
-                                                else if (g.type === 'MultiPoint' || g.type === 'LineString') g.coordinates.forEach(extend);
-                                                else if (g.type === 'MultiLineString' || g.type === 'Polygon') g.coordinates.flat().forEach(extend);
-                                                else if (g.type === 'MultiPolygon') g.coordinates.flat(2).forEach(extend);
-                                            });
-                                            if (isFinite(west) && isFinite(east) && isFinite(south) && isFinite(north)) {
-                                                try { map.stop(); } catch { }
-                                                console.debug('[DM] fallback fitBounds', { west, south, east, north });
-                                                map.fitBounds([[west, south], [east, north]], { padding: 80, duration: 700, essential: true });
-                                            }
-                                        }
-                                    }}
+                                    onClick={() => zoomTo(file)}
                                 >
                                     🎯 Zoom
                                 </button>
-
                             </div>
                         </div>
                     ))
                 )}
+            </Section>
+
+            {/* Tagging demo (immutable, deduped) */}
+            <Section title="🏷️ Tagging (no-dup demo)">
+                <div className="grid grid-cols-1 gap-2 text-xs">
+                    <div className="flex gap-2 items-center">
+                        <span>File:</span>
+                        <select
+                            className="border rounded p-1"
+                            value={tagTargetFileId}
+                            onChange={(e) => setTagTargetFileId(e.target.value)}
+                        >
+                            <option value="">— select file —</option>
+                            {GeojsonFiles.map(f => <option key={f.id} value={String(f.id)}>{f.name}</option>)}
+                        </select>
+                    </div>
+                    <div className="flex gap-2 items-center">
+                        <input
+                            className="border rounded p-1"
+                            placeholder='tag e.g. "restaurant"'
+                            value={tagInput}
+                            onChange={(e) => setTagInput(e.target.value)}
+                        />
+                        <button
+                            className="px-2 py-1 bg-emerald-600 text-white rounded disabled:opacity-50"
+                            disabled={!selectedFile || !tagInput}
+                            onClick={() => runTagOp({ type: 'add', tag: tagInput })}
+                        >
+                            Add tag
+                        </button>
+                        <button
+                            className="px-2 py-1 bg-rose-600 text-white rounded disabled:opacity-50"
+                            disabled={!selectedFile || !tagInput}
+                            onClick={() => runTagOp({ type: 'remove', tag: tagInput })}
+                        >
+                            Remove tag
+                        </button>
+                    </div>
+
+                    <div className="flex gap-2 items-center">
+                        <input
+                            className="border rounded p-1"
+                            placeholder='from tag'
+                            value={replaceFrom}
+                            onChange={(e) => setReplaceFrom(e.target.value)}
+                        />
+                        <input
+                            className="border rounded p-1"
+                            placeholder='to tag'
+                            value={replaceTo}
+                            onChange={(e) => setReplaceTo(e.target.value)}
+                        />
+                        <button
+                            className="px-2 py-1 bg-indigo-600 text-white rounded disabled:opacity-50"
+                            disabled={!selectedFile || !replaceFrom || !replaceTo}
+                            onClick={() => runTagOp({ type: 'replace', from: replaceFrom, to: replaceTo })}
+                        >
+                            Replace tag
+                        </button>
+                    </div>
+                </div>
+                {/* Quick test util in console:
+           window.__DataMgrTest && window.__DataMgrTest()
+        */}
             </Section>
 
             <Section title="⬇️ Export">
@@ -228,4 +325,23 @@ export default function DataManagerPanel() {
             </Section>
         </Section>
     );
+}
+
+// Expose a tiny manual test helper if needed (runs in console)
+if (typeof window !== 'undefined') {
+    window.__DataMgrTest = function () {
+        const s = useVrpStore.getState();
+        const first = s.GeojsonFiles[0];
+        if (!first) { console.warn('[DataMgr] no files'); return; }
+        const before = first?.data?.features?.[0]?.properties?.tags || [];
+        console.log('[DataMgr] before', before);
+        useVrpStore.setState(state => {
+            const list = state.GeojsonFiles.map((f) =>
+                f.id === first.id ? applyTagOperationToFileFeatures(f, { type: 'add', tag: 'A' }) : f
+            );
+            return { GeojsonFiles: list };
+        });
+        const after = useVrpStore.getState().GeojsonFiles[0]?.data?.features?.[0]?.properties?.tags || [];
+        console.log('[DataMgr] after add A', after);
+    };
 }

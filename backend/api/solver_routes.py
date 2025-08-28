@@ -1,7 +1,7 @@
 # api/solver_routes.py
 import inspect
 import math
-from typing import List, Optional, Any, Dict
+from typing import List, Optional, Any, Dict, Tuple
 
 from fastapi import APIRouter, HTTPException
 
@@ -42,6 +42,90 @@ def _n_nodes_from_matrix(m: MatrixResult) -> int:
     if m and m.durations:
         return len(m.durations)
     return 0
+
+
+# -------------------- EUC_2D helpers --------------------
+
+def _has_euclidean_xy(waypoints: Optional[List[Dict[str, Any]]]) -> bool:
+    if not waypoints:
+        return False
+    # consider EUC_2D if most waypoints carry numeric x,y
+    count = 0
+    for w in waypoints:
+        if isinstance(w, dict) and ("x" in w) and ("y" in w):
+            try:
+                float(w["x"]); float(w["y"])
+                count += 1
+            except Exception:
+                pass
+    return count >= max(1, len(waypoints) // 2)
+
+
+def _euclid(a: Tuple[float, float], b: Tuple[float, float]) -> float:
+    ax, ay = a; bx, by = b
+    return math.hypot(ax - bx, ay - by)
+
+
+def _build_euclidean_matrix_from_waypoints(
+    waypoints: List[Dict[str, Any]],
+    duration_scale: Optional[float] = None,
+    x_field: str = "x",
+    y_field: str = "y",
+) -> MatrixResult:
+    """
+    Build distances from planar (x,y). Durations are distances * duration_scale.
+    If duration_scale is None, apply a heuristic: default to 60 (seconds) when TWs
+    look like seconds; otherwise 1 (minutes).
+    """
+    coords: List[Tuple[float, float]] = []
+    for w in waypoints:
+        x = w.get(x_field); y = w.get(y_field)
+        if x is None or y is None:
+            raise ValueError("Waypoint missing x/y for EUC_2D matrix build")
+        coords.append((float(x), float(y)))
+
+    n = len(coords)
+    distances = [[0.0] * n for _ in range(n)]
+    for i in range(n):
+        for j in range(i + 1, n):
+            d = _euclid(coords[i], coords[j])
+            distances[i][j] = d
+            distances[j][i] = d
+
+    # heuristic for duration scale
+    if duration_scale is None:
+        # If caller provided time windows/service times, try to guess
+        # NOTE: We don't have direct access here; leave None and let caller pass scale.
+        duration_scale = 60.0  # safe default for Solomon: minutes -> seconds
+
+    durations = [[int(round(d * duration_scale)) for d in row] for row in distances]
+    return MatrixResult(distances=distances, durations=durations)
+
+
+def _guess_euclidean_duration_scale(
+    node_time_windows: Optional[List[Optional[List[int]]]],
+    node_service_times: Optional[List[int]],
+) -> float:
+    """
+    Try to infer whether TW/service are already in seconds.
+    Rule of thumb:
+      - If max(TW width) >= 20,000 -> likely seconds -> scale=60 (distance minutes -> seconds)
+      - Else -> keep minutes -> scale=1
+    """
+    try:
+        INF = 10**9
+        widths = []
+        if node_time_windows:
+            for tw in node_time_windows:
+                if isinstance(tw, list) and len(tw) == 2 and tw[0] is not None and tw[1] is not None:
+                    s = 0 if tw[0] is None else int(tw[0])
+                    e = INF if tw[1] is None else int(tw[1])
+                    widths.append(max(0, e - s))
+        max_width = max(widths) if widths else 0
+        return 60.0 if max_width >= 20000 else 1.0
+    except Exception:
+        return 60.0  # conservative (Solomon)
+# --------------------------------------------------------
 
 
 def _normalize_optional_arrays_for_solver(
@@ -124,11 +208,27 @@ def solve(req: SolveRequest):
             matrix = _as_matrix_result(req.matrix)
 
         s = (req.solver or "").lower().strip()
+
+        # ---------- NEW: EUC_2D auto-matrix from (x,y) waypoints ----------
+        # If caller didn't provide a matrix and supplied planar waypoints, build one.
+        waypoints = getattr(req, "waypoints", None)
+        if matrix is None and _has_euclidean_xy(waypoints):
+            # Heuristic: choose scale so durations match TW/service units (sec vs min).
+            scale = _guess_euclidean_duration_scale(
+                getattr(req, "node_time_windows", None),
+                getattr(req, "node_service_times", None),
+            )
+            matrix = _build_euclidean_matrix_from_waypoints(waypoints, duration_scale=scale)
+
+        # ---------- Solver-specific preconditions ----------
         if s in ("ortools", "pyomo"):
             if matrix is None or not (matrix.distances or matrix.durations):
                 raise HTTPException(
                     status_code=400,
-                    detail=f"matrix is required for solver '{req.solver}'. Hint: compute via /distance-matrix or include 'waypoints' for vroom.",
+                    detail=(
+                        f"matrix is required for solver '{req.solver}'. "
+                        f"Provide 'matrix', or provide (x,y) waypoints to auto-build EUC_2D."
+                    ),
                 )
         elif s == "vroom":
             if not getattr(req, "waypoints", None) and matrix is None:
@@ -167,8 +267,8 @@ def solve(req: SolveRequest):
         )
 
         # Only VROOM receives waypoints (coordinate mode)
-        if s == "vroom" and getattr(req, "waypoints", None) is not None:
-            call_kwargs["waypoints"] = req.waypoints
+        if s == "vroom" and waypoints is not None:
+            call_kwargs["waypoints"] = waypoints
 
         # Prepare to invoke the solver
         solve_fn = getattr(solver, "solve")

@@ -1,4 +1,3 @@
-// src/components/sidebar/RouteToolsPanel.js
 'use client';
 
 import { useState, useMemo, useEffect } from 'react';
@@ -8,6 +7,7 @@ import useWaypointStore from '@/hooks/useWaypointStore';
 import useUiStore from '@/hooks/useUIStore';
 import { computeETAsFromMatrix } from '@/utils/eta';
 import useRenderSettingsStore from '@/hooks/useRenderSettingsStore';
+import { useRouteGeometry } from '@/hooks/useRouteGeometry';
 
 // tiny haversine (km)
 const toRad = d => d * Math.PI / 180;
@@ -24,6 +24,27 @@ function openPath(coords = []) {
   const closed = Array.isArray(A) && Array.isArray(B) && A.length >= 2 && B.length >= 2 && A[0] === B[0] && A[1] === B[1];
   return closed ? coords.slice(0, -1) : coords;
 }
+
+const stripEta = (obj) => {
+  if (!obj) return obj;
+  const n = { ...obj };
+  delete n.etaEpoch;
+  delete n.etaIndices;
+  delete n.etaRelative;
+  delete n.etaTimestamps;
+  delete n.etaStartEpoch;
+  return n;
+};
+
+const clearRunEtas = (run) => {
+  if (!run) return run;
+  const base = stripEta(run);
+  if (Array.isArray(base.routes)) {
+    return { ...base, routes: base.routes.map(stripEta) };
+  }
+  return base;
+};
+
 function toLonLat(w) {
   if (!w) return null;
   if (Array.isArray(w.coordinates) && w.coordinates.length >= 2) {
@@ -43,12 +64,10 @@ function extractRouteLeg(run) {
 }
 function extractCoords(run, globalWaypoints) {
   if (!run) return [];
-  // baked geometry
   if (Array.isArray(run?.geometry?.coordinates)) return run.geometry.coordinates;
   const r0 = extractRouteLeg(run);
   if (Array.isArray(r0?.geometry?.coordinates)) return r0.geometry.coordinates;
 
-  // rebuild from waypoint_ids using run- or global-waypoints
   const ids = Array.isArray(r0?.waypoint_ids) ? r0.waypoint_ids.map(Number) : null;
   if (ids && ids.length) {
     const w =
@@ -63,7 +82,6 @@ function extractCoords(run, globalWaypoints) {
     if (coords.length >= 2) return coords;
   }
 
-  // final fallback: use current global waypoints in order
   const fallback = (globalWaypoints || []).map(toLonLat).filter(Array.isArray);
   return fallback.length >= 2 ? fallback : [];
 }
@@ -80,7 +98,6 @@ function buildFallbackEtas(coords, speedKmh = 50) {
 }
 
 export default function RouteToolsPanel() {
-  // runs/routes (support both store shapes)
   const runsOrRoutes = useRouteStore(s =>
   (Array.isArray(s.routes) && s.routes.length ? s.routes :
     (Array.isArray(s.runs) ? s.runs : []))
@@ -92,23 +109,23 @@ export default function RouteToolsPanel() {
     useRouteStore.setState({ currentIndex: i });
   };
 
-  // global waypoints (fallback for reconstruction)
   const globalWaypoints = useWaypointStore(s => s.waypoints || []);
 
-  // ETAs toggle
-  const showETAs = useUiStore(s => s.showETAs) ?? false;
-  const setShowETAs = useUiStore(s => s.setShowETAs) || (() => { });
-  // geometry source: sync UI store <-> render store
+  const showETAs = useUiStore(s => s.etasEnabled) ?? false;
+  const setShowETAs = useUiStore(s => s.setEtasEnabled) || (() => { });
+
   const uiGeom = useUiStore(s => s.geometrySource);
   const setUiGeom = useUiStore(s => s.setGeometrySource) || null;
   const geom = useRenderSettingsStore(s => s.geometrySource) || 'auto';
   const setGeom = useRenderSettingsStore(s => s.setGeometrySource);
 
   useEffect(() => {
-    if (typeof uiGeom === 'string' && uiGeom !== geom) setGeom(uiGeom);
-    console.debug('[RouteTools] ui geometrySource changed →', uiGeom);
-  }, [uiGeom]);
-  
+    if (typeof uiGeom === 'string' && uiGeom !== geom) {
+      setGeom(uiGeom);
+      console.debug('[RouteGeom] ui geometrySource changed →', uiGeom);
+    }
+  }, [uiGeom]); // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     if (setUiGeom) setUiGeom(geom);
     try { localStorage.setItem('geometrySource', geom); } catch { }
@@ -116,7 +133,6 @@ export default function RouteToolsPanel() {
 
   const [busy, setBusy] = useState(false);
 
-  // keep index valid
   useEffect(() => {
     const n = runsOrRoutes?.length ?? 0;
     if (!n) return;
@@ -129,17 +145,26 @@ export default function RouteToolsPanel() {
     const run = runsOrRoutes?.[currentIndex] ?? null;
     if (!run) return null;
     const coords = openPath(extractCoords(run, globalWaypoints));
-    console.debug('[RouteTools] active route extracted coords', {
+    console.debug('[RouteGeom] active route extracted coords', {
       count: coords?.length || 0,
       first: coords?.[0],
       last: coords?.[coords.length - 1],
       from: run?.solver || run?.meta?.solver,
     });
-    return { ...run, coords };
+    // keep any snapped/display coords that may have been persisted by hooks
+    return { ...run, coords, displayCoords: run?.displayCoords };
   }, [runsOrRoutes, currentIndex, globalWaypoints]);
 
+  // 🔌 Wire the geometry fetcher; it writes displayCoords into the store.
+  const geoState = useRouteGeometry(active, { source: geom, profile: 'driving' });
+  console.debug('[RTools] fetch geometry: ', geoState)
+
   const handleComputeETAs = async () => {
-    const coords = active?.coords;
+    // Prefer the *display* geometry (snapped) so ETAs line up with what you draw
+    const coords =
+      (Array.isArray(active?.displayCoords) && active.displayCoords.length > 1)
+        ? active.displayCoords
+        : active?.coords;
     if (!coords || coords.length < 2) return;
     setBusy(true);
     try {
@@ -149,14 +174,16 @@ export default function RouteToolsPanel() {
         const res = await computeETAsFromMatrix(coords, { profile: 'driving' });
         times = res?.times || [];
         indices = res?.indices || [];
-      } catch {
-        // fall back below
+        console.debug('[RouteGeom] ETA via backend matrix', { n: times.length });
+      } catch (e) {
+        console.warn('[RouteGeom] ETA backend failed, fallback', e?.message || e);
       }
 
       if (!Array.isArray(times) || times.length === 0) {
         const fb = buildFallbackEtas(coords, 50);
         times = fb.epochSeconds;
         indices = fb.indices;
+        console.debug('[RouteGeom] ETA fallback haversine', { n: times.length });
       }
 
       useRouteStore.setState((s) => {
@@ -174,24 +201,28 @@ export default function RouteToolsPanel() {
         return { [key]: list };
       });
 
-      setShowETAs(true);
-      console.debug('[ETA] set (final)', { count: times.length });
+      setShowETAs(true); // flips useUiStore().etasEnabled
+      console.debug('[RouteGeom] ETA set (final)', { count: times.length });
     } finally {
       setBusy(false);
     }
   };
 
   const handleClearETAs = () => {
-    if (!active) return;
+    // hide native glyph overlay immediately
+    useUiStore.getState().setEtasEnabled(false);
+
     useRouteStore.setState((s) => {
-      const list = Array.isArray(s.routes) ? [...s.routes] : (Array.isArray(s.runs) ? [...s.runs] : []);
-      const key = Array.isArray(s.routes) ? 'routes' : (Array.isArray(s.runs) ? 'runs' : 'routes');
       const idx = Number.isInteger(s.currentIndex) ? s.currentIndex : 0;
-      const r0 = { ...(list[idx] || {}) };
-      delete r0.etaEpoch; delete r0.etaIndices; delete r0.etaRelative;
-      delete r0.etaTimestamps; delete r0.etaStartEpoch;
-      list[idx] = r0;
-      return { [key]: list };
+
+      // both arrays exist; keep them consistent
+      const runs = Array.isArray(s.runs) ? [...s.runs] : [];
+      const routes = Array.isArray(s.routes) ? [...s.routes] : runs;
+
+      if (routes[idx]) routes[idx] = clearRunEtas(routes[idx]);
+      if (runs[idx]) runs[idx] = clearRunEtas(runs[idx]);
+
+      return { runs, routes };
     });
   };
 
