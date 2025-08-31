@@ -2,7 +2,8 @@
 from typing import Optional, List
 from models.distance_matrix import MatrixResult
 from models.fleet import Vehicle
-from models.solvers import Route, Routes
+from models.solvers import Routes
+
 
 def enrich_routes_with_metrics(
     routes: Routes,
@@ -20,7 +21,7 @@ def enrich_routes_with_metrics(
         if matrix.durations is not None:
             dur = 0.0
         for i in range(len(idxs) - 1):
-            a, b = idxs[i], idxs[i+1]
+            a, b = idxs[i], idxs[i + 1]
             dist += float(matrix.distances[a][b])  # assume KM
             if dur is not None:
                 dur += float(matrix.durations[a][b])  # seconds
@@ -32,7 +33,7 @@ def enrich_routes_with_metrics(
         v = next((v for v in fleet if v.id == r.vehicle_id), None)
         if v:
             km = dist
-            r.metadata = (r.metadata or {})
+            r.metadata = r.metadata or {}
             if getattr(v, "cost_per_km", None) is not None:
                 r.metadata["cost"] = km * float(v.cost_per_km)
             if getattr(v, "emissions_per_km", None) is not None:

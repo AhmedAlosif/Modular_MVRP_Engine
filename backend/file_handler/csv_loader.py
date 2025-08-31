@@ -18,19 +18,21 @@ def load_csv_points(path: str) -> list[Waypoint]:
                 lat = row.get("y")
                 lon = row.get("x")
             if lat is None or lon is None:
-                raise ValueError(
-                    "CSV must have lat/lon (or lng) or x/y columns.")
+                raise ValueError("CSV must have lat/lon (or lng) or x/y columns.")
 
-            wps.append(Waypoint(
-                id=str(row.get("id", i)),
-                lat=float(lat),
-                lon=float(lon),
-                demand=int(row.get("demand", 0) or 0),
-                service_time=int(row.get("service_time", 0) or 0),
-                time_window=(
-                    [int(row["tw_start"]), int(row["tw_end"])]
-                    if row.get("tw_start") and row.get("tw_end") else None
-                ),
-                depot=_b(row.get("depot", "false")),
-            ))
+            wps.append(
+                Waypoint(
+                    id=str(row.get("id", i)),
+                    lat=float(lat),
+                    lon=float(lon),
+                    demand=int(row.get("demand", 0) or 0),
+                    service_time=int(row.get("service_time", 0) or 0),
+                    time_window=(
+                        [int(row["tw_start"]), int(row["tw_end"])]
+                        if row.get("tw_start") and row.get("tw_end")
+                        else None
+                    ),
+                    depot=_b(row.get("depot", "false")),
+                )
+            )
     return wps

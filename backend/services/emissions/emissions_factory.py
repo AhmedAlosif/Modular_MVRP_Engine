@@ -2,7 +2,7 @@
 from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Literal
 
 from .factors import GHGFactors
 
@@ -16,6 +16,7 @@ PresetName = Literal[
     "defra_2025_condensed",
     "defra_2025_sample",
 ]
+
 
 @lru_cache(maxsize=8)
 def get_factors(preset: PresetName = "defra_2025_condensed") -> GHGFactors:
@@ -31,7 +32,9 @@ def get_factors(preset: PresetName = "defra_2025_condensed") -> GHGFactors:
             return GHGFactors.from_xlsx_defra_2025(xlsx, name="defra_2025_full")
         except Exception as e:
             # Fallback so the backend still runs
-            print(f"[emissions] WARNING: Failed to parse full DEFRA file: {e}. Using sample factors.")
+            print(
+                f"[emissions] WARNING: Failed to parse full DEFRA file: {e}. Using sample factors."
+            )
             return GHGFactors.sample_defra_like("defra_2025_sample")
 
     if preset == "defra_2025_condensed":
@@ -39,7 +42,9 @@ def get_factors(preset: PresetName = "defra_2025_condensed") -> GHGFactors:
         try:
             return GHGFactors.from_xlsx_defra_2025(xlsx, name="defra_2025_condensed")
         except Exception as e:
-            print(f"[emissions] WARNING: Failed to parse condensed DEFRA file: {e}. Using sample factors.")
+            print(
+                f"[emissions] WARNING: Failed to parse condensed DEFRA file: {e}. Using sample factors."
+            )
             return GHGFactors.sample_defra_like("defra_2025_sample")
 
     # Default: sample

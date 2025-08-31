@@ -9,6 +9,7 @@ from core.exceptions import SolverRequestError
 from models.fleet import Vehicle
 from models.solvers import Routes, Route
 
+
 def _get_token() -> str:
     token = (
         os.getenv("MAPBOX_TOKEN")
@@ -18,6 +19,7 @@ def _get_token() -> str:
     if not token:
         raise SolverRequestError("MAPBOX token not configured")
     return token
+
 
 def _lonlat_of(wp: Any) -> Tuple[float, float]:
     """
@@ -45,6 +47,7 @@ def _lonlat_of(wp: Any) -> Tuple[float, float]:
             return float(lon), float(lat)
 
     raise SolverRequestError("waypoints require lon/lat (top-level or under .location)")
+
 
 class MapboxOptimizerSolver(VRPSolver):
     """
@@ -78,7 +81,9 @@ class MapboxOptimizerSolver(VRPSolver):
         coords = [_lonlat_of(wp) for wp in waypoints]  # [(lon,lat)]
         n = len(coords)
         if not (0 <= depot_index < n):
-            raise SolverRequestError(f"Invalid depot_index {depot_index} for {n} waypoints")
+            raise SolverRequestError(
+                f"Invalid depot_index {depot_index} for {n} waypoints"
+            )
 
         # Reorder so depot is first, then all others (do not duplicate depot).
         order_map = [depot_index] + [i for i in range(n) if i != depot_index]
@@ -124,7 +129,9 @@ class MapboxOptimizerSolver(VRPSolver):
                 seq = [(wp.get("waypoint_index"), i) for i, wp in enumerate(wps)]
                 seq = [(idx, i) for idx, i in seq if isinstance(idx, int) and idx >= 0]
                 seq.sort(key=lambda t: t[0])
-                order_positions = [i for _, i in seq] if seq else list(range(len(reordered)))
+                order_positions = (
+                    [i for _, i in seq] if seq else list(range(len(reordered)))
+                )
 
                 t0 = data["trips"][0]
                 mock_distance_m = t0.get("distance")
@@ -136,8 +143,14 @@ class MapboxOptimizerSolver(VRPSolver):
         if node_order and node_order[-1] != node_order[0]:
             node_order.append(node_order[0])
 
-        distance_km = (float(mock_distance_m) / 1000.0) if isinstance(mock_distance_m, (int, float)) else None
-        duration_s = int(mock_duration_s) if isinstance(mock_duration_s, (int, float)) else None
+        distance_km = (
+            (float(mock_distance_m) / 1000.0)
+            if isinstance(mock_distance_m, (int, float))
+            else None
+        )
+        duration_s = (
+            int(mock_duration_s) if isinstance(mock_duration_s, (int, float)) else None
+        )
 
         veh = fleet[0]
         return Routes(

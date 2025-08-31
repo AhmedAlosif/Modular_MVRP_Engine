@@ -9,7 +9,7 @@ class Location(BaseModel):
 
 class TimeWindow(BaseModel):
     start: int  # seconds from midnight
-    end: int    # seconds from midnight
+    end: int  # seconds from midnight
 
 
 class Waypoint(BaseModel):
@@ -25,8 +25,7 @@ class Waypoint(BaseModel):
     priority: Optional[int] = 1
     emissions: Optional[float] = None
 
-
-    # NEW: accept demand = int -> [int] also for nested shape
+    # Accept demand = int -> [int] also for nested shape
     @field_validator("demand", mode="before")
     @classmethod
     def _coerce_demand_list(cls, v):
@@ -71,7 +70,11 @@ class Waypoint(BaseModel):
                 out.pop("service_time", None)
 
             # time_window: [start, end] -> TimeWindow
-            if "time_window" in v and isinstance(v["time_window"], (list, tuple)) and len(v["time_window"]) == 2:
+            if (
+                "time_window" in v
+                and isinstance(v["time_window"], (list, tuple))
+                and len(v["time_window"]) == 2
+            ):
                 start, end = v["time_window"]
                 out["time_window"] = {"start": int(start), "end": int(end)}
 
@@ -91,6 +94,7 @@ class Waypoint(BaseModel):
             return out
 
         return v
+
 
 class WaypointsRequest(BaseModel):
     waypoints: List[Waypoint]

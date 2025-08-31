@@ -7,10 +7,12 @@ from typing import Dict, List, Optional, Tuple
 
 # ---------------- helpers ----------------
 
+
 def _euclidean(p1: Tuple[float, float], p2: Tuple[float, float]) -> float:
     dx = p1[0] - p2[0]
     dy = p1[1] - p2[1]
     return math.hypot(dx, dy)
+
 
 def _build_distance_matrix_xy(coords: List[Tuple[float, float]]) -> List[List[float]]:
     n = len(coords)
@@ -22,15 +24,21 @@ def _build_distance_matrix_xy(coords: List[Tuple[float, float]]) -> List[List[fl
             mtx[j][i] = d
     return mtx
 
+
 def _tokenize_lines(text: str) -> List[str]:
     return [ln.strip() for ln in text.splitlines() if ln.strip()]
+
 
 def _read_sections(lines: List[str]) -> Dict[str, List[str]]:
     sections: Dict[str, List[str]] = {}
     current = None
     for ln in lines:
         upper = ln.upper()
-        if upper.endswith("_SECTION") or upper in ("NODE_COORD_SECTION", "DEMAND_SECTION", "DEPOT_SECTION"):
+        if upper.endswith("_SECTION") or upper in (
+            "NODE_COORD_SECTION",
+            "DEMAND_SECTION",
+            "DEPOT_SECTION",
+        ):
             current = upper
             sections[current] = []
         elif upper.startswith("SERVICE_TIME"):
@@ -44,6 +52,7 @@ def _read_sections(lines: List[str]) -> Dict[str, List[str]]:
         elif current:
             sections[current].append(ln)
     return sections
+
 
 def _parse_vehicle_header(lines: List[str]) -> Tuple[int, int]:
     num = None
@@ -75,7 +84,11 @@ def _parse_vehicle_header(lines: List[str]) -> Tuple[int, int]:
                         if up.startswith("NUMBER") or "CAPACITY" in up:
                             continue
                         parts = s.split()
-                        if len(parts) >= 2 and parts[0].isdigit() and parts[1].isdigit():
+                        if (
+                            len(parts) >= 2
+                            and parts[0].isdigit()
+                            and parts[1].isdigit()
+                        ):
                             if num is None:
                                 num = int(parts[0])
                             if cap is None:
@@ -84,9 +97,12 @@ def _parse_vehicle_header(lines: List[str]) -> Tuple[int, int]:
         except StopIteration:
             pass
 
-    if num is None: num = 1
-    if cap is None: cap = 10**9
+    if num is None:
+        num = 1
+    if cap is None:
+        cap = 10**9
     return num, cap
+
 
 def _parse_edge_weight_type(lines: List[str]) -> Optional[str]:
     for ln in lines[:100]:
@@ -94,6 +110,7 @@ def _parse_edge_weight_type(lines: List[str]) -> Optional[str]:
         if m:
             return m.group(1).upper()
     return None
+
 
 def _parse_node_coord_section(lines: List[str]) -> List[Tuple[int, float, float]]:
     nodes: List[Tuple[int, float, float]] = []
@@ -106,6 +123,7 @@ def _parse_node_coord_section(lines: List[str]) -> List[Tuple[int, float, float]
             nodes.append((i, x, y))
     return nodes
 
+
 def _parse_demand_section(lines: List[str]) -> Dict[int, int]:
     demands: Dict[int, int] = {}
     for ln in lines:
@@ -115,6 +133,7 @@ def _parse_demand_section(lines: List[str]) -> Dict[int, int]:
             dem = int(float(parts[1]))
             demands[idx] = dem
     return demands
+
 
 def _parse_time_window_section(lines: List[str]) -> Dict[int, Tuple[int, int]]:
     tw: Dict[int, Tuple[int, int]] = {}
@@ -127,6 +146,7 @@ def _parse_time_window_section(lines: List[str]) -> Dict[int, Tuple[int, int]]:
             tw[idx] = (start, end)
     return tw
 
+
 def _parse_service_time_section(lines: List[str]) -> Dict[int, int]:
     st: Dict[int, int] = {}
     for ln in lines:
@@ -136,6 +156,7 @@ def _parse_service_time_section(lines: List[str]) -> Dict[int, int]:
             sv = int(float(parts[1]))
             st[idx] = sv
     return st
+
 
 def _parse_depot_section(lines: List[str]) -> List[int]:
     depots: List[int] = []
@@ -147,11 +168,14 @@ def _parse_depot_section(lines: List[str]) -> List[int]:
             depots.append(int(ln))
     return depots
 
+
 def _is_solomon_text(contents: str) -> bool:
     up = contents.upper()
     return ("CUST" in up and "XCOORD" in up and "YCOORD" in up) or "CUSTOMER" in up
 
+
 # -------- Solomon parser (classic Solomon .txt like c101.txt) --------
+
 
 def _parse_solomon_text(contents: str) -> Dict[str, any]:
     lines = _tokenize_lines(contents)
@@ -167,13 +191,13 @@ def _parse_solomon_text(contents: str) -> Dict[str, any]:
     header_idx = None
     for i, ln in enumerate(lines):
         up = ln.upper()
-        if ("CUST" in up and "XCOORD" in up and "YCOORD" in up and "DEMAND" in up):
+        if "CUST" in up and "XCOORD" in up and "YCOORD" in up and "DEMAND" in up:
             header_idx = i
             break
     if header_idx is None:
         raise ValueError("Solomon: header line not found")
 
-    rows = lines[header_idx+1:]
+    rows = lines[header_idx + 1 :]
     waypoints: List[Dict] = []
     depot_index = 0
     ids = []
@@ -184,52 +208,61 @@ def _parse_solomon_text(contents: str) -> Dict[str, any]:
             continue
         try:
             cid = int(parts[0])
-            x = float(parts[1]); y = float(parts[2])
+            x = float(parts[1])
+            y = float(parts[2])
             dem = int(float(parts[3]))
-            ready = int(float(parts[4])); due = int(float(parts[5]))
+            ready = int(float(parts[4]))
+            due = int(float(parts[5]))
             service = int(float(parts[6]))
         except Exception:
             continue
 
         ids.append(cid)
-        waypoints.append({
-            "id": str(cid),
-            # keep both spaces
-            "x": x, "y": y,
-            "lat": x, "lon": y,
-            "demand": dem,
-            "service_time": service * 60,
-            "time_window": [ready * 60, due * 60],
-            "depot": False,
-        })
+        waypoints.append(
+            {
+                "id": str(cid),
+                # keep both spaces
+                "x": x,
+                "y": y,
+                "lat": x,
+                "lon": y,
+                "demand": dem,
+                "service_time": service * 60,
+                "time_window": [ready * 60, due * 60],
+                "depot": False,
+            }
+        )
 
     if waypoints:
         ids = [int(wp["id"]) for wp in waypoints]
         depot_id = 0 if 0 in ids else min(ids)
         for idx, wp in enumerate(waypoints):
-            wp["depot"] = (int(wp["id"]) == depot_id)
+            wp["depot"] = int(wp["id"]) == depot_id
             if wp["depot"]:
                 depot_index = idx
                 break
 
-    vehicles = [{
-        "id": f"veh-{i+1}",
-        "start": depot_index,
-        "end": depot_index,
-        "capacity": [int(cap)],
-        "skills": [],
-        "time_window": None,
-        "max_distance": None,
-        "max_duration": None,
-        "speed": None,
-        "emissions_per_km": None,
-    } for i in range(max(1, int(veh)))]
+    vehicles = [
+        {
+            "id": f"veh-{i+1}",
+            "start": depot_index,
+            "end": depot_index,
+            "capacity": [int(cap)],
+            "skills": [],
+            "time_window": None,
+            "max_distance": None,
+            "max_duration": None,
+            "speed": None,
+            "emissions_per_km": None,
+        }
+        for i in range(max(1, int(veh)))
+    ]
 
     return {
         "edge_weight_type": "EUC_2D",
         "coordinate_spaces": {
             "solver": {"type": "euclidean", "fields": ["x", "y"]},
-            "display": {"type": "wgs84", "fields": ["lon", "lat"]}
+            "display": {"type": "wgs84", "fields": ["lon", "lat"]},
         },
         "waypoints": waypoints,
         "fleet": {"vehicles": vehicles},
@@ -242,7 +275,9 @@ def _parse_solomon_text(contents: str) -> Dict[str, any]:
         },
     }
 
+
 # -------- Main entry for .vrp/.txt (CVRPLIB or Solomon) --------
+
 
 def load_vrplib(file_path: str | Path, compute_matrix: bool = True) -> Dict[str, any]:
     p = Path(file_path)
@@ -253,8 +288,10 @@ def load_vrplib(file_path: str | Path, compute_matrix: bool = True) -> Dict[str,
         if compute_matrix and data.get("waypoints"):
             coords_xy = [(wp["x"], wp["y"]) for wp in data["waypoints"]]
             distances = _build_distance_matrix_xy(coords_xy)
-            durations  = [[int(round(distances[i][j] * 60)) for j in range(len(distances))]
-                         for i in range(len(distances))]
+            durations = [
+                [int(round(distances[i][j] * 60)) for j in range(len(distances))]
+                for i in range(len(distances))
+            ]
             data["matrix"] = {"distances": distances, "durations": durations}
         data["meta"]["source"] = str(p)
         return data
@@ -289,44 +326,57 @@ def load_vrplib(file_path: str | Path, compute_matrix: bool = True) -> Dict[str,
         demand = int(demands.get(idx1, 0))
         tw = time_windows.get(idx1, None)
         service = int(service_times.get(idx1, 0))
-        waypoints.append({
-            "id": str(idx1),
-            # keep both spaces
-            "x": float(x), "y": float(y),
-            # legacy planar as lat/lon
-            "lat": float(x), "lon": float(y),
-            "demand": demand,
-            "service_time": service,
-            "time_window": list(tw) if tw else None,
-            "depot": (idx1 - 1) == depot_index,
-        })
+        waypoints.append(
+            {
+                "id": str(idx1),
+                # keep both spaces
+                "x": float(x),
+                "y": float(y),
+                # legacy planar as lat/lon
+                "lat": float(x),
+                "lon": float(y),
+                "demand": demand,
+                "service_time": service,
+                "time_window": list(tw) if tw else None,
+                "depot": (idx1 - 1) == depot_index,
+            }
+        )
 
-    vehicles: List[Dict] = [{
-        "id": f"veh-{v_idx+1}",
-        "start": depot_index,
-        "end": depot_index,
-        "capacity": [int(capacity)],
-        "skills": [],
-        "time_window": None,
-        "max_distance": None,
-        "max_duration": None,
-        "speed": None,
-        "emissions_per_km": None,
-    } for v_idx in range(vehicles_num)]
+    vehicles: List[Dict] = [
+        {
+            "id": f"veh-{v_idx+1}",
+            "start": depot_index,
+            "end": depot_index,
+            "capacity": [int(capacity)],
+            "skills": [],
+            "time_window": None,
+            "max_distance": None,
+            "max_duration": None,
+            "speed": None,
+            "emissions_per_km": None,
+        }
+        for v_idx in range(vehicles_num)
+    ]
 
     matrix: Optional[Dict] = None
     if compute_matrix and waypoints:
         coords_xy = [(wp["x"], wp["y"]) for wp in waypoints]
         distances = _build_distance_matrix_xy(coords_xy)
-        durations = [[distances[i][j] for j in range(len(distances))]
-                     for i in range(len(distances))]
+        durations = [
+            [distances[i][j] for j in range(len(distances))]
+            for i in range(len(distances))
+        ]
         matrix = {"distances": distances, "durations": durations}
 
     return {
         "edge_weight_type": edge_type,
         "coordinate_spaces": {
-            "solver": {"type": "euclidean", "fields": ["x", "y"]} if edge_type.startswith("EUC") else {"type":"wgs84","fields":["lon","lat"]},
-            "display": {"type": "wgs84", "fields": ["lon", "lat"]}
+            "solver": (
+                {"type": "euclidean", "fields": ["x", "y"]}
+                if edge_type.startswith("EUC")
+                else {"type": "wgs84", "fields": ["lon", "lat"]}
+            ),
+            "display": {"type": "wgs84", "fields": ["lon", "lat"]},
         },
         "waypoints": waypoints,
         "fleet": {"vehicles": vehicles},

@@ -8,13 +8,19 @@ import os
 # If you leave this nonempty, it can hide datasets during tests.
 # Make it empty to include all subfolders except the explicit excludes.
 BENCHMARK_INCLUDE_FOLDERS: set[str] = set()
-BENCHMARK_EXCLUDE_FOLDERS = {"custom_examples", "real_world", "test_files", "custom_data"}
+BENCHMARK_EXCLUDE_FOLDERS = {
+    "custom_examples",
+    "real_world",
+    "test_files",
+    "custom_data",
+}
 
 INSTANCE_EXTS = {".vrp", ".xml", ".txt"}
 SOLUTION_EXTS = {".sol", ".xml", ".txt"}
 DEFAULT_EXTS = {".vrp", ".xml", ".txt", ".sol", ".json", ".geojson", ".csv"}
 
 DATA_DIR = os.getenv("DATA_DIR", "./backend/data")
+
 
 def _candidate_roots() -> list[Path]:
     primary = _data_dir()
@@ -24,6 +30,7 @@ def _candidate_roots() -> list[Path]:
         roots.append(default_root)
     return roots
 
+
 def _data_dir() -> Path:
     """Resolve datasets root at call-time (honors monkeypatched module attr first)."""
     # Prefer the module-level variable (tests monkeypatch this), then fall back to env, then default.
@@ -32,9 +39,11 @@ def _data_dir() -> Path:
         raw = os.getenv("DATA_DIR", "./backend/data")
     return Path(str(raw)).resolve()
 
+
 def get_data_dir() -> Path:
     """Public accessor for routes and other modules."""
     return _data_dir()
+
 
 def set_data_dir(path: str | Path) -> Path:
     """Helper for tests; updates env and module attr."""
@@ -43,6 +52,7 @@ def set_data_dir(path: str | Path) -> Path:
     # keep as str to match how tests monkeypatch
     globals()["DATA_DIR"] = str(p)
     return p
+
 
 @dataclass
 class FileEntry:
@@ -59,6 +69,7 @@ class FileEntry:
             abspath=str(p),
             size=p.stat().st_size if p.exists() else 0,
         )
+
 
 def _iter_datasets() -> List[Path]:
     items: List[Path] = []
@@ -80,8 +91,10 @@ def _iter_datasets() -> List[Path]:
             seen.add(name_l)
     return sorted(items, key=lambda p: p.name.lower())
 
+
 def list_datasets() -> List[Dict]:
     return [{"name": ds.name, "path": str(ds)} for ds in _iter_datasets()]
+
 
 def _canonicalize_dataset(name: str) -> Optional[Path]:
     name_l = name.lower()
@@ -90,7 +103,8 @@ def _canonicalize_dataset(name: str) -> Optional[Path]:
             return ds
     return None
 
-def ensure_index(dataset: str, force_refresh: bool = False) -> None:
+
+def ensure_index(dataset: str) -> None:
     """
     Back-compat shim. We don't keep a cache here, but calling list_files once
     mirrors the old behavior (warm/validate).
@@ -108,6 +122,7 @@ def ensure_index(dataset: str, force_refresh: bool = False) -> None:
         # don't fail callers just because the dataset is empty/missing
         pass
 
+
 def _scan_files(root: Path, exts: Optional[Iterable[str]] = None) -> List[FileEntry]:
     exts_l = {e.lower() for e in exts} if exts else None
     out: List[FileEntry] = []
@@ -119,9 +134,11 @@ def _scan_files(root: Path, exts: Optional[Iterable[str]] = None) -> List[FileEn
         out.append(FileEntry.from_path(root, p))
     return out
 
+
 def normalize_dataset_name(name: str) -> str:
     lookup = {d["name"].lower(): d["name"] for d in list_datasets()}
     return lookup.get(name.lower(), name)
+
 
 def list_files(
     dataset: str,
@@ -152,12 +169,21 @@ def list_files(
         ql = q.lower()
         files = [f for f in files if ql in f.name.lower() or ql in f.relpath.lower()]
 
-    reverse = (order.lower() == "desc")
-    files.sort(key=(lambda f: f.size) if sort == "size" else (lambda f: f.name.lower()), reverse=reverse)
+    reverse = order.lower() == "desc"
+    files.sort(
+        key=(lambda f: f.size) if sort == "size" else (lambda f: f.name.lower()),
+        reverse=reverse,
+    )
 
     total = len(files)
-    window = files[offset: offset + limit]
-    return {"items": [asdict(f) for f in window], "total": total, "limit": limit, "offset": offset}
+    window = files[offset : offset + limit]
+    return {
+        "items": [asdict(f) for f in window],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
+
 
 def find_pair(dataset: str, name: str) -> Dict:
     """
@@ -172,6 +198,7 @@ def find_pair(dataset: str, name: str) -> Dict:
 
     # accept both "c101" and "c101.vrp"
     from pathlib import Path
+
     target = Path(name).stem.lower()
     instance: Optional[FileEntry] = None
     solution: Optional[FileEntry] = None
@@ -189,6 +216,7 @@ def find_pair(dataset: str, name: str) -> Dict:
             solution = FileEntry.from_path(ds, p)
         if instance and solution:
             break
+
     # normalize to include "path" alias
     def _pub(fe: Optional[FileEntry], kind: str) -> Optional[Dict]:
         if not fe:
@@ -197,7 +225,7 @@ def find_pair(dataset: str, name: str) -> Dict:
         d["dataset"] = ds.name
         d["kind"] = kind
         d["ext"] = Path(fe.abspath).suffix.lower()
-        d["path"] = fe.abspath            # <— alias expected by tests
+        d["path"] = fe.abspath  # <— alias expected by tests
         return d
 
     return {

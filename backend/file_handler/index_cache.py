@@ -1,9 +1,12 @@
 # services/file_handler/index_cache.py
 from __future__ import annotations
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Dict, Tuple, Any, Dict, Optional
-import os, time, threading
+from typing import List, Tuple, Any, Dict, Optional
+import os
+import time
+import threading
+
 
 @dataclass
 class FileEntry:
@@ -12,8 +15,10 @@ class FileEntry:
     mtime: float
     ext: str
 
+
 class DatasetIndexCache:
     """Simple in-process cache of file metadata per dataset folder."""
+
     _lock = threading.Lock()
     _cache: Dict[str, Tuple[float, List[FileEntry]]] = {}
     _ttl = 300  # seconds
@@ -23,12 +28,16 @@ class DatasetIndexCache:
         key = str(root.resolve())
         now = time.time()
         with cls._lock:
-            if not force and key in cls._cache and (now - cls._cache[key][0] < cls._ttl):
+            if (
+                not force
+                and key in cls._cache
+                and (now - cls._cache[key][0] < cls._ttl)
+            ):
                 return cls._cache[key][1]
 
         entries: List[FileEntry] = []
         # os.walk + DirEntry.stat is fast enough; avoid extra string ops inside the loop
-        for dirpath, _dirnames, filenames in os.walk(root):
+        for dirpath, filenames in os.walk(root):
             dp = Path(dirpath)
             for name in filenames:
                 p = dp / name

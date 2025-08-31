@@ -1,6 +1,7 @@
 # api/_coords.py  (new tiny util)
 from typing import Iterable, List, Dict, Any
 
+
 def coerce_coords(items: Iterable[Any]) -> List[Dict[str, float]]:
     """
     Accept:
@@ -20,8 +21,11 @@ def coerce_coords(items: Iterable[Any]) -> List[Dict[str, float]]:
     for it in items:  # type: ignore
         if isinstance(it, dict) and "lon" in it and "lat" in it:
             out.append({"lon": float(it["lon"]), "lat": float(it["lat"])})
-        elif (isinstance(it, (list, tuple)) and len(it) >= 2
-              and all(isinstance(x, (int, float)) for x in it[:2])):
+        elif (
+            isinstance(it, (list, tuple))
+            and len(it) >= 2
+            and all(isinstance(x, (int, float)) for x in it[:2])
+        ):
             out.append({"lon": float(it[0]), "lat": float(it[1])})
         else:
             raise ValueError("each coordinate must be {lon,lat} or [lon,lat]")

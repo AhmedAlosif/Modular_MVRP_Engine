@@ -3,6 +3,7 @@ import networkx as nx
 import pytest
 from adapters.online.osm_graph_adapter import OsmGraphAdapter
 
+
 def _toy_graph_factory(lat, lon, buffer_m, network_type):
     # Simple 3-node directed graph
     G = nx.DiGraph()
@@ -16,6 +17,7 @@ def _toy_graph_factory(lat, lon, buffer_m, network_type):
     G.add_edge(1, 3, length=400.0, travel_time=40.0)
     return G
 
+
 def _node_locator(G, coords):
     """
     Map coords to the nearest *existing* node by Euclidean distance in (lon,lat)
@@ -28,14 +30,15 @@ def _node_locator(G, coords):
         best = None
         best_d2 = float("inf")
         for nid, data in G.nodes(data=True):
-            dx = (data["x"] - cx)
-            dy = (data["y"] - cy)
-            d2 = dx*dx + dy*dy
+            dx = data["x"] - cx
+            dy = data["y"] - cy
+            d2 = dx * dx + dy * dy
             if d2 < best_d2:
                 best_d2 = d2
                 best = nid
         out.append(best)
     return out
+
 
 def test_adapter_offline_di():
     adapter = OsmGraphAdapter(

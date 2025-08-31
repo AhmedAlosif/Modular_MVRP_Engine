@@ -18,6 +18,7 @@ router = APIRouter()
 
 # ───────────────────────── types ─────────────────────────
 
+
 class Coordinate(BaseModel):
     lat: float
     lon: float
@@ -29,6 +30,7 @@ class ORSMatrixBody(BaseModel):
       - coordinates may be {lat,lon} or [lon,lat]
       - destinations optional; if omitted, origins are mirrored
     """
+
     origins: List[Coordinate]
     destinations: Optional[List[Coordinate]] = None
     mode: Literal["driving", "cycling", "walking"] = "driving"
@@ -55,7 +57,9 @@ class ORSMatrixBody(BaseModel):
 
 
 # ───────────────────────── legacy / generic entrypoint ─────────────────────────
-@router.post("/distance-matrix", summary="Compute a distance/duration matrix via adapter")
+@router.post(
+    "/distance-matrix", summary="Compute a distance/duration matrix via adapter"
+)
 async def get_distance_matrix(req: MatrixRequest):
     """
     Back-compat route that accepts a MatrixRequest with `adapter` set.
@@ -72,10 +76,12 @@ async def get_distance_matrix(req: MatrixRequest):
 
         gm = getattr(adapter, "get_matrix", None) or getattr(adapter, "matrix", None)
         if gm is None or not callable(gm):
-            raise RuntimeError(f"Adapter {type(adapter).__name__} exposes no get_matrix")
+            raise RuntimeError(
+                f"Adapter {type(adapter).__name__} exposes no get_matrix"
+            )
 
         origins = _as_plain_coords(req.origins)
-        dests   = _as_plain_coords(req.destinations or req.origins)
+        dests = _as_plain_coords(req.destinations or req.origins)
         sig = inspect.signature(gm)
         params = list(sig.parameters.keys())[1:]  # skip 'self'
         kwargs: Dict[str, Any] = {}
@@ -88,9 +94,13 @@ async def get_distance_matrix(req: MatrixRequest):
         try:
             if params and params[0] in ("request", "req") and len(params) == 1:
                 result = gm(req)
-            elif len(params) >= 2 and params[0] in ("origins", "sources") and params[1] == "destinations":
+            elif (
+                len(params) >= 2
+                and params[0] in ("origins", "sources")
+                and params[1] == "destinations"
+            ):
                 result = gm(origins, dests, **kwargs)
-            elif "coordinates" in params:   # e.g., osm_graph
+            elif "coordinates" in params:  # e.g., osm_graph
                 result = gm(origins, **kwargs)  # coordinates := origins
             else:
                 # Try request-first; if bad arity, fall back to (origins,dests)
@@ -98,7 +108,7 @@ async def get_distance_matrix(req: MatrixRequest):
                     result = gm(req)
                 except TypeError:
                     result = gm(origins, dests, **kwargs)
-        except TypeError as te:
+        except TypeError:
             # Final fallback with explicit keywords (for keyword-only signatures)
             if "coordinates" in params:
                 result = gm(coordinates=origins, **kwargs)
@@ -115,12 +125,12 @@ async def get_distance_matrix(req: MatrixRequest):
 
     except Exception as e:
         raise HTTPException(
-            500,
-            detail={"status": "error", "message": f"Internal server error: {e}"}
+            500, detail={"status": "error", "message": f"Internal server error: {e}"}
         )
 
 
 # ───────────────────────── simple ORS entrypoint (coords only) ─────────────────────────
+
 
 def _mk_key(body: ORSMatrixBody) -> str:
     o = ";".join(f"{c.lon:.6f},{c.lat:.6f}" for c in body.origins)
@@ -131,12 +141,14 @@ def _mk_key(body: ORSMatrixBody) -> str:
 
 @router.post(
     "/distance-matrix/ors",
-    summary="Compute a distance/duration matrix via OpenRouteService (coords-only request)"
+    summary="Compute a distance/duration matrix via OpenRouteService (coords-only request)",
 )
 async def ors_matrix(body: ORSMatrixBody):
     api_key = os.getenv("ORS_API_KEY")
     if not api_key:
-        raise HTTPException(status_code=500, detail="ORS not configured (missing ORS_API_KEY).")
+        raise HTTPException(
+            status_code=500, detail="ORS not configured (missing ORS_API_KEY)."
+        )
 
     key = _mk_key(body)
     hit = ors_matrix_cache.get(key)
@@ -163,7 +175,9 @@ async def ors_matrix(body: ORSMatrixBody):
 
         resp = {
             "status": "success",
-            "data": {"matrix": {"distances": result.distances, "durations": result.durations}}
+            "data": {
+                "matrix": {"distances": result.distances, "durations": result.durations}
+            },
         }
         ors_matrix_cache.set(key, resp)
         return resp

@@ -1,6 +1,7 @@
 # core/cache.py
-import time, asyncio
+import time
 from typing import Any, Callable, Awaitable, Dict, Tuple
+
 
 class TTLCache:
     def __init__(self, ttl_seconds: int = 60, maxsize: int = 1000):
@@ -33,8 +34,9 @@ class TTLCache:
         self.set(key, val)
         return val
 
+
 # one shared cache instance (tune TTL later if needed)
-match_cache  = TTLCache(ttl_seconds=120)
+match_cache = TTLCache(ttl_seconds=120)
 matrix_cache = TTLCache(ttl_seconds=60)
-geom_cache   = TTLCache(ttl_seconds=60)
+geom_cache = TTLCache(ttl_seconds=60)
 ors_matrix_cache = TTLCache(ttl_seconds=90)

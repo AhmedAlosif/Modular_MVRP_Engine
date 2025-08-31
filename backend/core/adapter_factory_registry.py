@@ -2,6 +2,7 @@
 from typing import Callable, Dict
 from core.interfaces import DistanceMatrixAdapter
 
+
 class AdapterFactoryRegistry:
     _factories: Dict[str, Callable[[], DistanceMatrixAdapter]] = {}
 

@@ -22,6 +22,7 @@ except Exception:
 
 _xml = VRPSetXMLLoader()
 
+
 def _vrp_loader(path: str, **kw: Any):
     if VRPLIB_AVAILABLE:
         try:
@@ -35,8 +36,10 @@ def _vrp_loader(path: str, **kw: Any):
         return load_solomon_txt(path, **kw)
     return load_cvrplib_like(path, **kw)
 
+
 def _xml_loader(path: str, **kw: Any):
     return _xml.load_file(path, compute_matrix=kw.get("compute_matrix", True))
+
 
 def _txt_loader(path: str, **kw):
     with open(path, "r", errors="ignore") as f:
@@ -46,14 +49,17 @@ def _txt_loader(path: str, **kw):
         return load_solomon_txt(path, **kw)
     return load_cvrplib_like(path, **kw)
 
+
 _LOADER_REGISTRY: Dict[str, Callable] = {
     ".vrp": _vrp_loader,
     ".xml": _xml_loader,
     ".txt": _txt_loader,
 }
 
+
 def list_supported_extensions():
     return sorted(_LOADER_REGISTRY.keys())
+
 
 def get_loader_for_filename(filename: str):
     ext = Path(filename).suffix.lower()
@@ -61,7 +67,9 @@ def get_loader_for_filename(filename: str):
         return _LOADER_REGISTRY[ext]
     raise ValueError(f"No loader for '{ext}'. Supported: {list_supported_extensions()}")
 
-# ---------- NEW: a general-purpose 'load_any' helper ----------
+
+# ---------- a general-purpose 'load_any' helper ----------
+
 
 def _to_std_waypoint_dicts(waypoints_model_list) -> list[dict]:
     """
@@ -73,16 +81,19 @@ def _to_std_waypoint_dicts(waypoints_model_list) -> list[dict]:
         # pydantic object or dict
         data = wp.model_dump() if hasattr(wp, "model_dump") else dict(wp)
         # CSV/GeoJSON loaders use fields: id, lat, lon, demand, service_time, time_window, depot
-        out.append({
-            "id": str(data.get("id")),
-            "lat": float(data.get("lat")),
-            "lon": float(data.get("lon")),
-            "demand": int(data.get("demand") or 0),
-            "service_time": int(data.get("service_time") or 0),
-            "time_window": data.get("time_window"),
-            "depot": bool(data.get("depot") or False),
-        })
+        out.append(
+            {
+                "id": str(data.get("id")),
+                "lat": float(data.get("lat")),
+                "lon": float(data.get("lon")),
+                "demand": int(data.get("demand") or 0),
+                "service_time": int(data.get("service_time") or 0),
+                "time_window": data.get("time_window"),
+                "depot": bool(data.get("depot") or False),
+            }
+        )
     return out
+
 
 def _euclid_matrix_from_latlon(pts: list[tuple[float, float]]) -> dict:
     """
@@ -90,14 +101,17 @@ def _euclid_matrix_from_latlon(pts: list[tuple[float, float]]) -> dict:
     Returns { "distances": [[...]], "durations": [[...]] } (durations == distances).
     """
     n = len(pts)
-    dist = [[0.0]*n for _ in range(n)]
+    dist = [[0.0] * n for _ in range(n)]
     for i in range(n):
-        for j in range(i+1, n):
-            d = math.hypot(pts[i][0]-pts[j][0], pts[i][1]-pts[j][1])
+        for j in range(i + 1, n):
+            d = math.hypot(pts[i][0] - pts[j][0], pts[i][1] - pts[j][1])
             dist[i][j] = dist[j][i] = d
     return {"distances": dist, "durations": [row[:] for row in dist]}
 
-def load_any(path: str, kind: str | None = None, compute_matrix: bool = True, **kw) -> dict:
+
+def load_any(
+    path: str, kind: str | None = None, compute_matrix: bool = True, **kw
+) -> dict:
     """
     Unified loader:
       - kind == 'csv' or file ends with .csv  -> use load_csv_points (if available)
@@ -112,11 +126,17 @@ def load_any(path: str, kind: str | None = None, compute_matrix: bool = True, **
     # CSV
     if kind == "csv" or ext == ".csv":
         if not load_csv_points:
-            raise ValueError("CSV support not available (services.file_loader.csv_loader not found).")
+            raise ValueError(
+                "CSV support not available (services.file_loader.csv_loader not found)."
+            )
         wps_models = load_csv_points(str(p))
         wps = _to_std_waypoint_dicts(wps_models)
         depot_index = next((i for i, w in enumerate(wps) if w.get("depot")), 0)
-        matrix = _euclid_matrix_from_latlon([(w["lat"], w["lon"]) for w in wps]) if compute_matrix else None
+        matrix = (
+            _euclid_matrix_from_latlon([(w["lat"], w["lon"]) for w in wps])
+            if compute_matrix
+            else None
+        )
         return {
             "waypoints": wps,
             "fleet": {"vehicles": []},
@@ -128,11 +148,17 @@ def load_any(path: str, kind: str | None = None, compute_matrix: bool = True, **
     # GeoJSON
     if kind in ("geojson", "json") or ext in (".geojson", ".json"):
         if not load_geojson_points:
-            raise ValueError("GeoJSON support not available (services.file_loader.geojson_loader not found).")
+            raise ValueError(
+                "GeoJSON support not available (services.file_loader.geojson_loader not found)."
+            )
         wps_models = load_geojson_points(str(p))
         wps = _to_std_waypoint_dicts(wps_models)
         depot_index = next((i for i, w in enumerate(wps) if w.get("depot")), 0)
-        matrix = _euclid_matrix_from_latlon([(w["lat"], w["lon"]) for w in wps]) if compute_matrix else None
+        matrix = (
+            _euclid_matrix_from_latlon([(w["lat"], w["lon"]) for w in wps])
+            if compute_matrix
+            else None
+        )
         return {
             "waypoints": wps,
             "fleet": {"vehicles": []},

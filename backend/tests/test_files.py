@@ -8,6 +8,7 @@ import pytest
 # Import helpers
 # ---------------------------------
 
+
 def _maybe_import(module_name, *attr_names):
     """
     Try to import module and return (module, first_existing_attr or None).
@@ -21,6 +22,7 @@ def _maybe_import(module_name, *attr_names):
             return mod, getattr(mod, a)
     return mod, None
 
+
 def _first_available(candidates):
     """
     candidates = [(module_path, func_name), ...]
@@ -31,6 +33,7 @@ def _first_available(candidates):
         if fn is not None:
             return mod, fn
     return None, None
+
 
 def _get_lat_lon_from_waypoint(wp):
     # Accept dict, pydantic model, or simple object
@@ -49,7 +52,11 @@ def _get_lat_lon_from_waypoint(wp):
         lon = None
     # Try nested location
     if lat is None or lon is None:
-        loc = getattr(wp, "location", None) if not isinstance(wp, dict) else wp.get("location")
+        loc = (
+            getattr(wp, "location", None)
+            if not isinstance(wp, dict)
+            else wp.get("location")
+        )
         if isinstance(loc, dict):
             lat = lat if lat is not None else loc.get("lat")
             lon = lon if lon is not None else loc.get("lon")
@@ -60,9 +67,14 @@ def _get_lat_lon_from_waypoint(wp):
 
     return None if lat is None else float(lat), None if lon is None else float(lon)
 
+
 def _get_time_window(wp):
     # Accept list-like [start,end], object with start/end, or None
-    tw = getattr(wp, "time_window", None) if not isinstance(wp, dict) else wp.get("time_window")
+    tw = (
+        getattr(wp, "time_window", None)
+        if not isinstance(wp, dict)
+        else wp.get("time_window")
+    )
     if tw is None:
         return None
     if isinstance(tw, (list, tuple)) and len(tw) == 2:
@@ -74,18 +86,22 @@ def _get_time_window(wp):
         return [int(start), int(end)]
     return None
 
+
 # ---------------------------------
 # csv_loader
 # ---------------------------------
 
+
 def test_csv_loader_happy(tmp_path: Path):
     # Try multiple known locations / names
-    mod, fn = _first_available([
-        ("file_loader.csv_loader", "load_csv_points"),
-        ("file_handler.csv_loader", "load_csv"),
-        ("file_handler.csv_loader", "load_csv_points"),
-        ("file_handler.csv_loader", "load_csv_points"),
-    ])
+    mod, fn = _first_available(
+        [
+            ("file_loader.csv_loader", "load_csv_points"),
+            ("file_handler.csv_loader", "load_csv"),
+            ("file_handler.csv_loader", "load_csv_points"),
+            ("file_handler.csv_loader", "load_csv_points"),
+        ]
+    )
     if fn is None:
         pytest.skip("csv_loader not available")
 
@@ -104,17 +120,21 @@ def test_csv_loader_happy(tmp_path: Path):
     tw1 = _get_time_window(wps[1])
     assert tw1 == [10, 100]
 
+
 # ---------------------------------
 # geojson_loader
 # ---------------------------------
 
+
 def test_geojson_loader_happy(tmp_path: Path):
-    mod, fn = _first_available([
-        ("file_loader.geojson_loader", "load_geojson_points"),
-        ("file_handler.geojson_loader", "load_geojson"),
-        ("file_handler.geojson_loader", "load_geojson_points"),
-        ("file_handler.geojson_loader", "load_geojson_points"),
-    ])
+    mod, fn = _first_available(
+        [
+            ("file_loader.geojson_loader", "load_geojson_points"),
+            ("file_handler.geojson_loader", "load_geojson"),
+            ("file_handler.geojson_loader", "load_geojson_points"),
+            ("file_handler.geojson_loader", "load_geojson_points"),
+        ]
+    )
     if fn is None:
         pytest.skip("geojson_loader not available")
 
@@ -124,12 +144,23 @@ def test_geojson_loader_happy(tmp_path: Path):
             {
                 "type": "Feature",
                 "geometry": {"type": "Point", "coordinates": [10.0, 20.0]},  # lon, lat
-                "properties": {"id": "0", "demand": 0, "service_time": 0, "time_window": [0, 1000], "depot": True},
+                "properties": {
+                    "id": "0",
+                    "demand": 0,
+                    "service_time": 0,
+                    "time_window": [0, 1000],
+                    "depot": True,
+                },
             },
             {
                 "type": "Feature",
                 "geometry": {"type": "Point", "coordinates": [13.0, 24.0]},
-                "properties": {"id": "1", "demand": 5, "service_time": 10, "time_window": [0, 1000]},
+                "properties": {
+                    "id": "1",
+                    "demand": 5,
+                    "service_time": 10,
+                    "time_window": [0, 1000],
+                },
             },
         ],
     }
@@ -142,12 +173,16 @@ def test_geojson_loader_happy(tmp_path: Path):
     # Some loaders swap order; accept both
     assert (lat1, lon1) in {(24.0, 13.0), (13.0, 24.0)}
 
+
 # ---------------------------------
 # index_cache via dataset_indexer (smoke)
 # ---------------------------------
 
+
 def test_index_cache_smoke(tmp_path: Path, monkeypatch):
-    di_mod, list_datasets = _maybe_import("file_handler.dataset_indexer", "list_datasets")
+    di_mod, list_datasets = _maybe_import(
+        "file_handler.dataset_indexer", "list_datasets"
+    )
     if di_mod is None or list_datasets is None:
         pytest.skip("dataset_indexer.list_datasets not available")
 
@@ -158,7 +193,9 @@ def test_index_cache_smoke(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(di_mod, "DATA_DIR", str(base), raising=False)
 
     # clear cache if present
-    if hasattr(di_mod, "DatasetIndexCache") and hasattr(di_mod.DatasetIndexCache, "_cache"):
+    if hasattr(di_mod, "DatasetIndexCache") and hasattr(
+        di_mod.DatasetIndexCache, "_cache"
+    ):
         di_mod.DatasetIndexCache._cache.clear()
 
     first = list_datasets()
@@ -166,12 +203,16 @@ def test_index_cache_smoke(tmp_path: Path, monkeypatch):
     second = list_datasets()
     assert second  # same result (likely cache hit)
 
+
 # ---------------------------------
 # solution_loader (Solomon .sol)
 # ---------------------------------
 
+
 def test_solution_loader_minimal(tmp_path: Path):
-    mod, load_sol = _maybe_import("file_handler.solution_loader", "load_solution_sol", "load_solution")
+    mod, load_sol = _maybe_import(
+        "file_handler.solution_loader", "load_solution_sol", "load_solution"
+    )
     if load_sol is None:
         pytest.skip("solution_loader.load_solution_sol not available")
 
@@ -185,12 +226,16 @@ def test_solution_loader_minimal(tmp_path: Path):
     if obj is not None:
         assert float(obj) == pytest.approx(123.45, rel=1e-6)
 
+
 # ---------------------------------
 # vrplib_loader (vrplib_lib_wrapper)
 # ---------------------------------
 
+
 def test_vrplib_loader_coords_matrix(monkeypatch):
-    mod, load_vrplib = _maybe_import("file_handler.vrplib_lib_wrapper", "load_with_vrplib")
+    mod, load_vrplib = _maybe_import(
+        "file_handler.vrplib_lib_wrapper", "load_with_vrplib"
+    )
     if load_vrplib is None:
         pytest.skip("vrplib_lib_wrapper.load_with_vrplib not available")
 
@@ -225,8 +270,11 @@ def test_vrplib_loader_coords_matrix(monkeypatch):
     # time window fixed
     assert wps[1]["time_window"][0] <= wps[1]["time_window"][1]
 
+
 def test_vrplib_loader_edge_weight(monkeypatch):
-    mod, load_vrplib = _maybe_import("file_handler.vrplib_lib_wrapper", "load_with_vrplib")
+    mod, load_vrplib = _maybe_import(
+        "file_handler.vrplib_lib_wrapper", "load_with_vrplib"
+    )
     if load_vrplib is None:
         pytest.skip("vrplib_lib_wrapper.load_with_vrplib not available")
 
@@ -250,16 +298,20 @@ def test_vrplib_loader_edge_weight(monkeypatch):
     assert out["matrix"]["distances"] == [[0.0, 2.0], [2.0, 0.0]]
     assert len(out["fleet"]["vehicles"]) == 1
 
+
 # ---------------------------------
 # vrplib_writer (be liberal with signatures)
 # ---------------------------------
 
+
 def test_vrplib_writer_minimal(tmp_path: Path):
-    mod, writer = _first_available([
-        ("file_handler.vrplib_writer", "write_vrplib"),
-        ("file_handler.vrplib_writer", "write_instance"),
-        ("file_handler.vrplib_writer", "write_vrplib"),
-    ])
+    mod, writer = _first_available(
+        [
+            ("file_handler.vrplib_writer", "write_vrplib"),
+            ("file_handler.vrplib_writer", "write_instance"),
+            ("file_handler.vrplib_writer", "write_vrplib"),
+        ]
+    )
     if writer is None:
         pytest.skip("vrplib_writer not available")
 
@@ -268,10 +320,27 @@ def test_vrplib_writer_minimal(tmp_path: Path):
     # Instance-like payload
     instance_like = {
         "waypoints": [
-            {"id": "1", "lat": 0.0, "lon": 0.0, "demand": 0, "time_window": [0, 1000], "service_time": 0, "depot": True},
-            {"id": "2", "lat": 3.0, "lon": 4.0, "demand": 5, "time_window": [0, 1000], "service_time": 0},
+            {
+                "id": "1",
+                "lat": 0.0,
+                "lon": 0.0,
+                "demand": 0,
+                "time_window": [0, 1000],
+                "service_time": 0,
+                "depot": True,
+            },
+            {
+                "id": "2",
+                "lat": 3.0,
+                "lon": 4.0,
+                "demand": 5,
+                "time_window": [0, 1000],
+                "service_time": 0,
+            },
         ],
-        "fleet": {"vehicles": [{"id": "veh-1", "capacity": [10], "start": 0, "end": 0}]},
+        "fleet": {
+            "vehicles": [{"id": "veh-1", "capacity": [10], "start": 0, "end": 0}]
+        },
         "matrix": {"distances": [[0, 5], [5, 0]]},
     }
 
@@ -317,9 +386,11 @@ def test_vrplib_writer_minimal(tmp_path: Path):
     assert "DIMENSION" in text
     assert ("NODE_COORD" in text) or ("EDGE_WEIGHT_SECTION" in text)
 
+
 # ---------------------------------
 # xml_loader (services.file_handler.xml_loader)
 # ---------------------------------
+
 
 def test_xml_loader_roundtripish():
     mod, cls = _maybe_import("file_handler.xml_loader", "VRPSetXMLLoader")
@@ -337,14 +408,20 @@ def test_xml_loader_roundtripish():
         <node id="2" x="3" y="4" demand="5" ready="0" due="100" service="0" />
       </nodes>
     </instance>
-    """.strip().encode("utf-8")
+    """.strip().encode(
+        "utf-8"
+    )
 
     loader = cls()
     out = loader.load_bytes(xml, filename="tiny.xml", compute_matrix=True)
 
     assert "waypoints" in out and len(out["waypoints"]) == 2
     assert out.get("depot_index", 0) == 0
-    assert "fleet" in out and "vehicles" in out["fleet"] and len(out["fleet"]["vehicles"]) == 2
+    assert (
+        "fleet" in out
+        and "vehicles" in out["fleet"]
+        and len(out["fleet"]["vehicles"]) == 2
+    )
 
     m = out.get("matrix", {}).get("distances")
     assert m and len(m) == 2 and len(m[0]) == 2

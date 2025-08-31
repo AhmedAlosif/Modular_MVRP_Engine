@@ -18,6 +18,7 @@ TOY_VROOM_COORD = {
     "depot_index": 0,
 }
 
+
 def test_vroom_coordinate_mode(client):
     # Ensure solvers are registered (app lifespan already ran via client)
     from services.solver_factory import _solver_registry

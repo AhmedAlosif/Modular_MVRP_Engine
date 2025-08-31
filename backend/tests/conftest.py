@@ -1,5 +1,7 @@
 # backend/tests/conftest.py
-import os, sys, pytest
+import os
+import sys
+import pytest
 from shutil import which
 from fastapi.testclient import TestClient
 
@@ -14,14 +16,17 @@ os.environ.setdefault("TEST_MAPBOX_TOKEN", "test-token")
 # Import app only after setting env
 from main import app
 
+
 def _register_solvers_if_needed():
     """Make sure solver registry is populated for /capabilities-based tests."""
     try:
         from services.solver_factory import register_solvers
+
         register_solvers()
     except Exception:
         # Pyomo might be missing CBC, etc.—ignore here, tests will skip gracefully.
         pass
+
 
 @pytest.fixture(scope="session")
 def client():
@@ -30,12 +35,15 @@ def client():
     with TestClient(app) as c:
         yield c
 
+
 def solver_available(name: str) -> bool:
     return which(name) is not None
+
 
 @pytest.fixture(scope="session")
 def has_ors():
     return bool(os.getenv("ORS_API_KEY"))
+
 
 @pytest.fixture(scope="session")
 def has_cbc():

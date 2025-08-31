@@ -1,10 +1,12 @@
 # adapters/online/mapbox_matrix_adapter.py
 from __future__ import annotations
 from typing import List, Dict, Optional
-import os, httpx
+import os
+import httpx
 
 from core.interfaces import DistanceMatrixAdapter
 from models.distance_matrix import MatrixResult
+
 
 class MapboxMatrixAdapter(DistanceMatrixAdapter):
     """
@@ -14,13 +16,23 @@ class MapboxMatrixAdapter(DistanceMatrixAdapter):
     """
 
     def __init__(self, api_key: Optional[str] = None, profile: str = "driving"):
-        self.api_key = api_key or os.getenv("MAPBOX_TOKEN") or os.getenv("MAPBOX_ACCESS_TOKEN") or "test-token"
+        self.api_key = (
+            api_key
+            or os.getenv("MAPBOX_TOKEN")
+            or os.getenv("MAPBOX_ACCESS_TOKEN")
+            or "test-token"
+        )
         self.profile = profile
 
     def _path(self, coords: List[Dict[str, float]]) -> str:
         return ";".join(f"{c['lon']},{c['lat']}" for c in coords)
 
-    def get_matrix(self, origins: List[Dict[str, float]], destinations: List[Dict[str, float]], mode: str = "driving") -> MatrixResult:
+    def get_matrix(
+        self,
+        origins: List[Dict[str, float]],
+        destinations: List[Dict[str, float]],
+        mode: str = "driving",
+    ) -> MatrixResult:
         if not origins or not destinations:
             return MatrixResult(distances=[[0.0]], durations=[[0.0]])
 
@@ -53,11 +65,13 @@ class MapboxMatrixAdapter(DistanceMatrixAdapter):
 
         if distances_m is None and durations_s is None:
             # Fallback: empty
-            return MatrixResult(distances=[[0.0]*n_d for _ in range(n_o)],
-                                durations=[[0.0]*n_d for _ in range(n_o)])
+            return MatrixResult(
+                distances=[[0.0] * n_d for _ in range(n_o)],
+                durations=[[0.0] * n_d for _ in range(n_o)],
+            )
 
         distances_km = None
         if distances_m is not None:
-            distances_km = [[(x or 0.0)/1000.0 for x in row] for row in distances_m]
+            distances_km = [[(x or 0.0) / 1000.0 for x in row] for row in distances_m]
 
         return MatrixResult(distances=distances_km, durations=durations_s)

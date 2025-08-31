@@ -1,7 +1,6 @@
 # services/solvers/pyomo_solver.py
 from __future__ import annotations
 from typing import List, Optional
-import math
 
 import pyomo.environ as pyo
 from pyomo.opt import SolverFactory
@@ -63,7 +62,10 @@ class PyomoSolver(VRPSolver):
 
         # time windows
         # default: [0, BIG_T]
-        BIG_T = max(10_000, max((tw[1] for tw in (node_time_windows or []) if tw), default=10_000))
+        BIG_T = max(
+            10_000,
+            max((tw[1] for tw in (node_time_windows or []) if tw), default=10_000),
+        )
         tw = node_time_windows or [None] * n
         tw_bounds = []
         for i in range(n):
@@ -72,7 +74,9 @@ class PyomoSolver(VRPSolver):
             else:
                 lo, hi = 0, BIG_T
             if hi < lo:
-                raise SolverError(f"Infeasible time window at node {i}: upper < lower ({hi} < {lo}).")
+                raise SolverError(
+                    f"Infeasible time window at node {i}: upper < lower ({hi} < {lo})."
+                )
             tw_bounds.append((lo, hi))
 
         # vehicle capacities
@@ -95,12 +99,14 @@ class PyomoSolver(VRPSolver):
             lo, hi = tw_bounds[i]
             if i == depot_index:
                 continue
-            lb_arrival = durations[depot_index][i]  # best-case arrival ignoring other customers
+            lb_arrival = durations[depot_index][
+                i
+            ]  # best-case arrival ignoring other customers
             if hi < lb_arrival:
                 raise SolverError(
                     f"Infeasible: node {i} latest time {hi} is earlier than shortest travel {lb_arrival} from depot."
                 )
-            
+
         K = range(m)
         N = range(n)
         V = [i for i in range(n) if i != depot_index]  # customers only
@@ -121,6 +127,7 @@ class PyomoSolver(VRPSolver):
         # No self loops
         def _no_loops_rule(model, i, j, k):
             return model.x[i, j, k] == 0 if i == j else pyo.Constraint.Skip
+
         model.no_loops = pyo.Constraint(N, N, K, rule=_no_loops_rule)
 
         # Each customer visited exactly once (departing arcs across all vehicles)
@@ -128,6 +135,7 @@ class PyomoSolver(VRPSolver):
             if i == depot:
                 return pyo.Constraint.Skip
             return sum(model.x[i, j, k] for j in N for k in K if j != i) == 1
+
         model.visit_once = pyo.Constraint(V, rule=_visit_once_rule)
 
         # Each customer has exactly one arrival across all vehicles
@@ -135,15 +143,18 @@ class PyomoSolver(VRPSolver):
             if i == depot:
                 return pyo.Constraint.Skip
             return sum(model.x[j, i, k] for j in N for k in K if j != i) == 1
+
         model.arrive_once = pyo.Constraint(V, rule=_arrive_once_rule)
 
         # Start/end at depot exactly when vehicle is used
         def _start_rule(model, k):
             return sum(model.x[depot, j, k] for j in N if j != depot) == model.used[k]
+
         model.depot_start = pyo.Constraint(K, rule=_start_rule)
 
         def _end_rule(model, k):
             return sum(model.x[i, depot, k] for i in N if i != depot) == model.used[k]
+
         model.depot_end = pyo.Constraint(K, rule=_end_rule)
 
         # Flow conservation for each vehicle
@@ -155,24 +166,30 @@ class PyomoSolver(VRPSolver):
                 - sum(model.x[j, i, k] for j in N if j != i)
                 == 0
             )
+
         model.flow = pyo.Constraint(V, K, rule=_flow_rule)
 
         # If a vehicle is not used, it cannot touch any customer (link arcs → used[k])
         def _link_out_rule(model, i, k):
-            if i == depot: 
+            if i == depot:
                 return pyo.Constraint.Skip
             return sum(model.x[i, j, k] for j in N if j != i) <= model.used[k]
+
         model.link_out = pyo.Constraint(V, K, rule=_link_out_rule)
 
         def _link_in_rule(model, i, k):
             if i == depot:
                 return pyo.Constraint.Skip
             return sum(model.x[j, i, k] for j in N if j != i) <= model.used[k]
+
         model.link_in = pyo.Constraint(V, K, rule=_link_in_rule)
 
         # If a vehicle is used, it must serve at least one customer (prevents a depot-only tour)
         def _used_has_work_rule(model, k):
-            return sum(model.x[i, j, k] for i in V for j in N if j != i) >= model.used[k]
+            return (
+                sum(model.x[i, j, k] for i in V for j in N if j != i) >= model.used[k]
+            )
+
         model.used_has_work = pyo.Constraint(K, rule=_used_has_work_rule)
 
         # Time windows
@@ -183,6 +200,7 @@ class PyomoSolver(VRPSolver):
         def _tw_bounds_rule(model, i):
             lo, hi = tw_bounds[i]
             return pyo.inequality(lo, model.a[i], hi)
+
         model.tw_bounds = pyo.Constraint(N, rule=_tw_bounds_rule)
 
         # Time propagation with Big-M
@@ -198,21 +216,26 @@ class PyomoSolver(VRPSolver):
             if j == depot:
                 return pyo.Constraint.Skip
             # allow propagation from depot -> j and all customer -> customer arcs
-            return model.a[j] >= model.a[i] + s[i] + durations[i][j] - M * (1 - model.x[i, j, k])
+            return model.a[j] >= model.a[i] + s[i] + durations[i][j] - M * (
+                1 - model.x[i, j, k]
+            )
 
         model.time_prop = pyo.Constraint(N, N, K, rule=_time_prop_rule)
 
         # Capacity: sum of demands served by vehicle k ≤ capacity[k]
         def _cap_rule(model, k):
             # if vehicle k visits i, then exactly one outgoing arc from i by k => sum_j x[i,j,k] ∈ {0,1}
-            return sum(d[i] * sum(model.x[i, j, k] for j in N if j != i) for i in V) <= caps[k]
+            return (
+                sum(d[i] * sum(model.x[i, j, k] for j in N if j != i) for i in V)
+                <= caps[k]
+            )
+
         model.capacity = pyo.Constraint(K, rule=_cap_rule)
 
         # ---- Objective (build expr first; set obj once) ----
         vehicle_fixed_cost = float(kwargs.get("vehicle_fixed_cost", 0.0))
         distance_cost = sum(
-            dist[i][j] * model.x[i, j, k]
-            for i in N for j in N for k in K if i != j
+            dist[i][j] * model.x[i, j, k] for i in N for j in N for k in K if i != j
         )
 
         obj_expr = distance_cost
@@ -233,7 +256,10 @@ class PyomoSolver(VRPSolver):
         results = solver.solve(
             model,
             tee=False,
-            options={"seconds": default_tlim, "ratioGap": float(kwargs.get("ratioGap", 0.0))},
+            options={
+                "seconds": default_tlim,
+                "ratioGap": float(kwargs.get("ratioGap", 0.0)),
+            },
         )
 
         # -------- Robust termination checks (soft vs hard) --------
@@ -259,18 +285,20 @@ class PyomoSolver(VRPSolver):
         # Decide
         if status == SS.ok and term in ok_terms:
             pass  # proceed to extract
-        elif (status in {SS.aborted, SS.warning} and (term in soft_terms or "intermediate" in term_s or "time" in term_s)) \
-            or ("aborted" in status_s and "intermediate" in term_s):
+        elif (
+            status in {SS.aborted, SS.warning}
+            and (term in soft_terms or "intermediate" in term_s or "time" in term_s)
+        ) or ("aborted" in status_s and "intermediate" in term_s):
             # Soft stop: try extracting an incumbent; if none, we’ll raise a helpful msg after extraction.
             pass
         elif term == TC.infeasible or "infeasible" in term_s:
             raise SolverError(
-        "Infeasible model: constraints admit no solution with the given fleet/capacity/time windows."
-        )
+                "Infeasible model: constraints admit no solution with the given fleet/capacity/time windows."
+            )
         else:
             # Unknown/real error
-            raise SolverError(f"Pyomo/CBC error (status={status}, term={term})")        
-        
+            raise SolverError(f"Pyomo/CBC error (status={status}, term={term})")
+
         # --- Extract solution into Routes ---
         routes_out: List[Route] = []
 
@@ -311,17 +339,22 @@ class PyomoSolver(VRPSolver):
             if len(path) <= 2 or total_dist <= 1e-6:
                 continue
 
-            routes_out.append(Route(
-                vehicle_id=veh.id,
-                waypoint_ids=[str(i) for i in path],
-                total_distance=total_dist,
-                total_duration=None,
-                emissions=None,
-                metadata={"solver": "cbc"},
-            ))
+            routes_out.append(
+                Route(
+                    vehicle_id=veh.id,
+                    waypoint_ids=[str(i) for i in path],
+                    total_distance=total_dist,
+                    total_duration=None,
+                    emissions=None,
+                    metadata={"solver": "cbc"},
+                )
+            )
 
         # ---- post-extraction guard ----
-        from pyomo.opt import SolverStatus as SS, TerminationCondition as TC  # reuse the ones you imported above
+        from pyomo.opt import (
+            SolverStatus as SS,
+            TerminationCondition as TC,
+        )  # reuse the ones you imported above
 
         if not routes_out:
             # Soft-stop: time/iterations/intermediate-non-integer -> suggest more time or relaxation
@@ -337,8 +370,10 @@ class PyomoSolver(VRPSolver):
             }
             soft_terms = {t for t in soft_terms if t is not None}
 
-            if (status in {SS.aborted, SS.warning} and (term in soft_terms or "intermediate" in term_s or "time" in term_s)) \
-            or ("aborted" in status_s and "intermediate" in term_s):
+            if (
+                status in {SS.aborted, SS.warning}
+                and (term in soft_terms or "intermediate" in term_s or "time" in term_s)
+            ) or ("aborted" in status_s and "intermediate" in term_s):
                 raise SolverError(
                     "Solver stopped before finding an integer-feasible solution. "
                     "Try increasing time_limit (e.g., 180–300s) or relaxing time windows/capacity."

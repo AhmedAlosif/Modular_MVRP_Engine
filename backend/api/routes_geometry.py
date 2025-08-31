@@ -48,7 +48,10 @@ async def route_geometry(body: GeomBody = Body(...)):
 
     # OSRM direct (geojson)
     import os
-    base = (body.osrm_url or os.getenv("OSRM_URL") or "https://router.project-osrm.org").rstrip("/")
+
+    base = (
+        body.osrm_url or os.getenv("OSRM_URL") or "https://router.project-osrm.org"
+    ).rstrip("/")
     path = ";".join(f"{c['lon']},{c['lat']}" for c in coords)
     url = f"{base}/route/v1/{body.profile}/{path}?overview=full&geometries=geojson"
     async with httpx.AsyncClient(timeout=20) as c:

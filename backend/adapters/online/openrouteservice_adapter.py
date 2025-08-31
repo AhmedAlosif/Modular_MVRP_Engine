@@ -1,6 +1,5 @@
-import math
 import httpx
-from typing import Any, Iterable
+from typing import Any
 
 from core.interfaces import DistanceMatrixAdapter
 from core.exceptions import DistanceMatrixRequestError
@@ -95,7 +94,9 @@ class ORSDistanceMatrixAdapter(DistanceMatrixAdapter):
             origins = request.origins
             destinations = request.destinations
             if not origins or not destinations:
-                raise DistanceMatrixRequestError("ORS requires both 'origins' and 'destinations'.")
+                raise DistanceMatrixRequestError(
+                    "ORS requires both 'origins' and 'destinations'."
+                )
 
             parameters = request.parameters or {}
             mode_map = {

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import os
-from typing import List, Tuple, Dict, Any, Union
+from typing import List, Tuple, Dict, Union
 
 import httpx
 from fastapi import APIRouter, HTTPException, Body
@@ -35,6 +35,7 @@ MATCHING_BASE = os.getenv(
 
 # --- Coord normalization helpers ---
 
+
 def _coerce_coords(raw):
     if not isinstance(raw, list) or len(raw) < 2:
         raise HTTPException(400, "coordinates must be a list of >=2 coords")
@@ -50,20 +51,28 @@ def _coerce_coords(raw):
     return out
 
 
-def _normalize_coords(coords: List[Union[List[float], Dict[str, float]]]) -> Tuple[str, List[Dict[str, float]]]:
+def _normalize_coords(
+    coords: List[Union[List[float], Dict[str, float]]],
+) -> Tuple[str, List[Dict[str, float]]]:
     norm: List[Dict[str, float]] = []
     for c in coords:
         if isinstance(c, dict):
             try:
-                lon = float(c["lon"]); lat = float(c["lat"])
+                lon = float(c["lon"])
+                lat = float(c["lat"])
             except Exception:
-                raise HTTPException(400, "coordinates items must have numeric 'lon' and 'lat'")
+                raise HTTPException(
+                    400, "coordinates items must have numeric 'lon' and 'lat'"
+                )
             norm.append({"lon": lon, "lat": lat})
         elif isinstance(c, (list, tuple)) and len(c) >= 2:
-            lon = float(c[0]); lat = float(c[1])
+            lon = float(c[0])
+            lat = float(c[1])
             norm.append({"lon": lon, "lat": lat})
         else:
-            raise HTTPException(400, "coordinates must be [[lon,lat],...] or [{lon,lat},...]")
+            raise HTTPException(
+                400, "coordinates must be [[lon,lat],...] or [{lon,lat},...]"
+            )
     if len(norm) < 2:
         raise HTTPException(400, "Need at least 2 coordinates")
     path = ";".join(f"{c['lon']},{c['lat']}" for c in norm)
@@ -71,6 +80,7 @@ def _normalize_coords(coords: List[Union[List[float], Dict[str, float]]]) -> Tup
 
 
 # --- Endpoints ---
+
 
 @router.post("/matrix")
 def mapbox_matrix(req: dict):
@@ -89,7 +99,10 @@ def mapbox_matrix(req: dict):
         if USE_PARAMS:
             r = httpx.get(
                 url,
-                params={"annotations": "duration,distance", "access_token": _get_token()},
+                params={
+                    "annotations": "duration,distance",
+                    "access_token": _get_token(),
+                },
                 timeout=20.0,
             )
         else:
@@ -113,7 +126,11 @@ def mapbox_matrix(req: dict):
 @router.post("/optimize")
 def mapbox_optimize(req: dict = Body(...)):
     if _in_pytest():
-        return {"code": "Ok", "trips": [{"distance": 1000, "duration": 120}], "waypoints": []}
+        return {
+            "code": "Ok",
+            "trips": [{"distance": 1000, "duration": 120}],
+            "waypoints": [],
+        }
 
     token = _get_token()
     profile = (req.get("profile") or "driving").strip()
@@ -138,7 +155,9 @@ def mapbox_optimize(req: dict = Body(...)):
         r.raise_for_status()
         return r.json()
     except httpx.HTTPStatusError as e:
-        raise HTTPException(e.response.status_code, f"Upstream error: {e.response.text}")
+        raise HTTPException(
+            e.response.status_code, f"Upstream error: {e.response.text}"
+        )
     except Exception as e:
         raise HTTPException(500, f"Internal error: {e}")
 
@@ -157,12 +176,17 @@ async def mapbox_match(body: dict = Body(...)):
         _, norm = _normalize_coords(coords)
         return {
             "code": "Ok",
-            "matchings": [{
-                "geometry": {
-                    "type": "LineString",
-                    "coordinates": [[norm[0]["lon"], norm[0]["lat"]], [norm[1]["lon"], norm[1]["lat"]]],
+            "matchings": [
+                {
+                    "geometry": {
+                        "type": "LineString",
+                        "coordinates": [
+                            [norm[0]["lon"], norm[0]["lat"]],
+                            [norm[1]["lon"], norm[1]["lat"]],
+                        ],
+                    }
                 }
-            }],
+            ],
         }
 
     profile = (body.get("profile") or "driving").split("-")[0]
@@ -175,10 +199,16 @@ async def mapbox_match(body: dict = Body(...)):
         radiuses = [25] * len(norm)
     elif isinstance(radiuses, (int, float)):
         radiuses = [int(radiuses)] * len(norm)
-    elif isinstance(radiuses, list) and len(radiuses) == len(norm) and all(isinstance(r, (int, float)) for r in radiuses):
+    elif (
+        isinstance(radiuses, list)
+        and len(radiuses) == len(norm)
+        and all(isinstance(r, (int, float)) for r in radiuses)
+    ):
         radiuses = [int(r) for r in radiuses]
     else:
-        raise HTTPException(400, "radiuses must be a number or number[] same length as coordinates")
+        raise HTTPException(
+            400, "radiuses must be a number or number[] same length as coordinates"
+        )
 
     steps = bool(body.get("steps", False))
     geometries = (body.get("geometries") or "geojson").strip()
@@ -195,7 +225,11 @@ async def mapbox_match(body: dict = Body(...)):
 
     try:
         async with httpx.AsyncClient(timeout=20) as client:
-            resp = await client.get(url, params=params) if USE_PARAMS else await client.get(url)
+            resp = (
+                await client.get(url, params=params)
+                if USE_PARAMS
+                else await client.get(url)
+            )
 
         if resp.status_code >= 400:
             try:
@@ -265,7 +299,10 @@ def _apply_eta_validation(params: dict, body: dict):
         raise HTTPException(400, "eta_type must be 'navigation' when provided")
     nav_profile = body.get("navigation_profile")
     if nav_profile not in ("driving", "walking", "cycling"):
-        raise HTTPException(400, "navigation_profile must be one of: driving, walking, cycling when eta_type is set")
+        raise HTTPException(
+            400,
+            "navigation_profile must be one of: driving, walking, cycling when eta_type is set",
+        )
     if not (body.get("origin") or body.get("proximity")):
         raise HTTPException(400, "Provide 'origin' or 'proximity' when eta_type is set")
 
@@ -308,8 +345,15 @@ async def mapbox_forward(body: dict = Body(...)):
 
     params = {"access_token": token, "q": q}
     for key in (
-        "language", "limit", "proximity", "bbox", "country", "types",
-        "poi_category", "poi_category_exclusions", "auto_complete",
+        "language",
+        "limit",
+        "proximity",
+        "bbox",
+        "country",
+        "types",
+        "poi_category",
+        "poi_category_exclusions",
+        "auto_complete",
     ):
         if key in body and body[key] is not None:
             params[key] = body[key]
@@ -347,8 +391,16 @@ async def mapbox_category(body: dict = Body(...)):
 
     params = {"access_token": token}
     for key in (
-        "language", "limit", "proximity", "bbox", "country",
-        "poi_category_exclusions", "sar_type", "route", "route_geometry", "time_deviation",
+        "language",
+        "limit",
+        "proximity",
+        "bbox",
+        "country",
+        "poi_category_exclusions",
+        "sar_type",
+        "route",
+        "route_geometry",
+        "time_deviation",
     ):
         if key in body and body[key] is not None:
             params[key] = body[key]

@@ -5,15 +5,19 @@ from typing import Iterable, Tuple, Dict, Any, Optional
 
 EUCLIDEAN_TYPES = {"EUC_2D", "EUC_3D", "ATT"}
 
+
 def _deg_per_km(lat_deg: float) -> Tuple[float, float]:
     # ~km per degree latitude/longitude
     km_per_deg_lat = 111.32
     km_per_deg_lon = max(1e-6, 111.32 * cos(lat_deg * pi / 180.0))
     return (1.0 / km_per_deg_lon, 1.0 / km_per_deg_lat)
 
-def looks_euclidean(edge_weight_type: Optional[str] = None,
-                    meta: Optional[Dict[str, Any]] = None,
-                    waypoints: Optional[Iterable[Dict[str, Any]]] = None) -> bool:
+
+def looks_euclidean(
+    edge_weight_type: Optional[str] = None,
+    meta: Optional[Dict[str, Any]] = None,
+    waypoints: Optional[Iterable[Dict[str, Any]]] = None,
+) -> bool:
     """Heuristic: header says EUC_* OR we see x/y on waypoints OR Solomon format."""
     if edge_weight_type and edge_weight_type.strip().upper() in EUCLIDEAN_TYPES:
         return True
@@ -26,6 +30,7 @@ def looks_euclidean(edge_weight_type: Optional[str] = None,
             if "x" in w and "y" in w:
                 return True
     return False
+
 
 def add_display_lonlat_from_euclidean(
     waypoints: Iterable[Dict[str, Any]],
@@ -58,7 +63,7 @@ def add_display_lonlat_from_euclidean(
     span = max(maxx - minx, maxy - miny) or 1.0
 
     dlon_per_km, dlat_per_km = _deg_per_km(anchor_lat)
-    width_deg  = scale_km * dlon_per_km
+    width_deg = scale_km * dlon_per_km
     height_deg = scale_km * dlat_per_km
 
     for w in waypoints:

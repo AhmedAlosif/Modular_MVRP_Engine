@@ -13,6 +13,7 @@ from models.distance_matrix import MatrixResult
 
 try:
     from vroom import Vehicle as VroomVehicle, Job as VroomJob, Input as VroomInput
+
     _HAS_VROOM = True
 except Exception:
     VroomVehicle = VroomJob = VroomInput = None  # type: ignore
@@ -20,10 +21,13 @@ except Exception:
 
 
 def _vehicles(fleet_obj) -> List[Vehicle]:
-    return list(fleet_obj.vehicles) if hasattr(fleet_obj, "vehicles") else list(fleet_obj)
+    return (
+        list(fleet_obj.vehicles) if hasattr(fleet_obj, "vehicles") else list(fleet_obj)
+    )
 
 
 # ---------- distance helpers (meters / seconds) ----------
+
 
 def _haversine_m(a: Tuple[float, float], b: Tuple[float, float]) -> float:
     """a,b in (lat, lon) → meters"""
@@ -39,7 +43,9 @@ def _haversine_m(a: Tuple[float, float], b: Tuple[float, float]) -> float:
     return 2.0 * R * math.asin(math.sqrt(max(0.0, x)))
 
 
-def _geo_matrix(coords_latlon: List[Tuple[float, float]], avg_speed_kmh: float = 50.0) -> Tuple[List[List[float]], List[List[float]]]:
+def _geo_matrix(
+    coords_latlon: List[Tuple[float, float]], avg_speed_kmh: float = 50.0
+) -> Tuple[List[List[float]], List[List[float]]]:
     """
     Build distance (meters) and duration (seconds) matrices using Haversine + constant speed.
     """
@@ -71,7 +77,9 @@ def _nn_path(dist: List[List[float]], depot: int) -> List[int]:
     return route
 
 
-def _route_totals(path: List[int], matrix: MatrixResult, ef_kg_per_km: float | None = None):
+def _route_totals(
+    path: List[int], matrix: MatrixResult, ef_kg_per_km: float | None = None
+):
     """
     Distances are assumed to be METERS, durations SECONDS.
     Returns (total_distance_m, total_duration_s|None, emissions_kg|None)
@@ -82,11 +90,18 @@ def _route_totals(path: List[int], matrix: MatrixResult, ef_kg_per_km: float | N
         total_dist_m += float(matrix.distances[a][b])
         if total_dur_s is not None:
             total_dur_s += float(matrix.durations[a][b])
-    emissions = (ef_kg_per_km or 0.0) * (total_dist_m / 1000.0) if ef_kg_per_km else None
-    return total_dist_m, int(total_dur_s) if isinstance(total_dur_s, (int, float)) else None, emissions
+    emissions = (
+        (ef_kg_per_km or 0.0) * (total_dist_m / 1000.0) if ef_kg_per_km else None
+    )
+    return (
+        total_dist_m,
+        int(total_dur_s) if isinstance(total_dur_s, (int, float)) else None,
+        emissions,
+    )
 
 
 # ---------- waypoint helpers ----------
+
 
 def _coords_from_waypoints(waypoints: List[Any]) -> List[Tuple[float, float]]:
     """
@@ -114,7 +129,9 @@ def _coords_from_waypoints(waypoints: List[Any]) -> List[Tuple[float, float]]:
                 lon = getattr(loc, "lon", None) if loc is not None else None
 
         if lat is None or lon is None:
-            raise SolverRequestError("Waypoint is missing lat/lon (either top-level or under .location).")
+            raise SolverRequestError(
+                "Waypoint is missing lat/lon (either top-level or under .location)."
+            )
         coords.append((float(lat), float(lon)))
     return coords
 
@@ -154,7 +171,9 @@ def _get_wp_meta(waypoints: Optional[List[Any]], idx: int):
     return svc, dem, tw
 
 
-def _coerce_delivery_to_capacity(delivery: Optional[List[int]], capacity: Optional[List[int]]) -> Optional[List[int]]:
+def _coerce_delivery_to_capacity(
+    delivery: Optional[List[int]], capacity: Optional[List[int]]
+) -> Optional[List[int]]:
     """
     Ensure the delivery vector length matches vehicle capacity dims when provided.
     """
@@ -186,7 +205,9 @@ class VroomSolver(VRPSolver):
             elif isinstance(request.matrix, dict):
                 matrix = MatrixResult(**request.matrix)
             else:
-                raise SolverRequestError(f"Unsupported matrix type: {type(request.matrix)}")
+                raise SolverRequestError(
+                    f"Unsupported matrix type: {type(request.matrix)}"
+                )
 
         # We'll want waypoint metadata for jobs (service, demand, TW) if present
         waypoints_list = list(getattr(request, "waypoints", []) or [])
@@ -195,7 +216,9 @@ class VroomSolver(VRPSolver):
         coords_latlon: Optional[List[Tuple[float, float]]] = None
         if matrix is None:
             if not waypoints_list:
-                raise SolverRequestError("VROOM needs either 'matrix' or 'waypoints' (coordinate mode).")
+                raise SolverRequestError(
+                    "VROOM needs either 'matrix' or 'waypoints' (coordinate mode)."
+                )
             coords_latlon = _coords_from_waypoints(waypoints_list)
             dist, durations = _geo_matrix(coords_latlon, avg_speed_kmh=50.0)
             matrix = MatrixResult(distances=dist, durations=durations)
@@ -205,18 +228,28 @@ class VroomSolver(VRPSolver):
         # basic sanity
         n = len(matrix.distances)
         if not (0 <= depot < n):
-            raise SolverRequestError(f"Invalid depot_index {depot} for matrix size {n}.")
+            raise SolverRequestError(
+                f"Invalid depot_index {depot} for matrix size {n}."
+            )
 
         # ---- No pyvroom? fallback NN on our matrix (single consolidated route) ----
         if not _HAS_VROOM:
             path = _nn_path(matrix.distances, depot)
-            td, tt, em = _route_totals(path, matrix, getattr(vehicles[0], "emissions_per_km", None))
+            td, tt, em = _route_totals(
+                path, matrix, getattr(vehicles[0], "emissions_per_km", None)
+            )
             return Routes(
                 status="success",
                 message="Fallback NN solution (pyvroom not available)",
-                routes=[Route(vehicle_id=str(vehicles[0].id),
-                              waypoint_ids=[str(i) for i in path],
-                              total_distance=td, total_duration=tt, emissions=em)]
+                routes=[
+                    Route(
+                        vehicle_id=str(vehicles[0].id),
+                        waypoint_ids=[str(i) for i in path],
+                        total_distance=td,
+                        total_duration=tt,
+                        emissions=em,
+                    )
+                ],
             )
 
         # ---- pyvroom input ----
@@ -234,29 +267,44 @@ class VroomSolver(VRPSolver):
             coord_mode = False
             index_kw = None
             if "location_index" in j_params:
-                index_kw = "location_index"   # modern builds
+                index_kw = "location_index"  # modern builds
             elif "index" in j_params:
-                index_kw = "index"            # some builds
+                index_kw = "index"  # some builds
             elif "location" in j_params:
-                coord_mode = True             # coordinates-only build
+                coord_mode = True  # coordinates-only build
             else:
-                raise SolverRequestError("Unrecognized pyvroom Job signature; cannot set location/index.")
+                raise SolverRequestError(
+                    "Unrecognized pyvroom Job signature; cannot set location/index."
+                )
 
             # If coord-mode and we don't have coords yet, try to discover some or fallback
             if coord_mode and coords_latlon is None:
                 coords = getattr(matrix, "coordinates", None)
-                if coords and len(coords) == n and isinstance(coords[0], (list, tuple)) and len(coords[0]) == 2:
+                if (
+                    coords
+                    and len(coords) == n
+                    and isinstance(coords[0], (list, tuple))
+                    and len(coords[0]) == 2
+                ):
                     # matrix may store [lon,lat]; convert to (lat,lon)
                     coords_latlon = [(float(c[1]), float(c[0])) for c in coords]
                 else:
                     path = _nn_path(matrix.distances, depot)
-                    td, tt, em = _route_totals(path, matrix, getattr(vehicles[0], "emissions_per_km", None))
+                    td, tt, em = _route_totals(
+                        path, matrix, getattr(vehicles[0], "emissions_per_km", None)
+                    )
                     return Routes(
                         status="success",
                         message="pyvroom requires coordinates but none provided; fallback NN used",
-                        routes=[Route(vehicle_id=str(vehicles[0].id),
-                                      waypoint_ids=[str(i) for i in path],
-                                      total_distance=td, total_duration=tt, emissions=em)]
+                        routes=[
+                            Route(
+                                vehicle_id=str(vehicles[0].id),
+                                waypoint_ids=[str(i) for i in path],
+                                total_distance=td,
+                                total_duration=tt,
+                                emissions=em,
+                            )
+                        ],
                     )
 
             # ---- Vehicles ----
@@ -270,13 +318,21 @@ class VroomSolver(VRPSolver):
                     # Vehicles expect coordinates [lon,lat]
                     if coords_latlon is None:
                         path = _nn_path(matrix.distances, depot)
-                        td, tt, em = _route_totals(path, matrix, getattr(vehicles[0], "emissions_per_km", None))
+                        td, tt, em = _route_totals(
+                            path, matrix, getattr(vehicles[0], "emissions_per_km", None)
+                        )
                         return Routes(
                             status="success",
                             message="pyvroom coordinate mode lacked coords; fallback NN used",
-                            routes=[Route(vehicle_id=str(vehicles[0].id),
-                                          waypoint_ids=[str(i) for i in path],
-                                          total_distance=td, total_duration=tt, emissions=em)]
+                            routes=[
+                                Route(
+                                    vehicle_id=str(vehicles[0].id),
+                                    waypoint_ids=[str(i) for i in path],
+                                    total_distance=td,
+                                    total_duration=tt,
+                                    emissions=em,
+                                )
+                            ],
                         )
                     start_ll = coords_latlon[start_idx]
                     end_ll = coords_latlon[end_idx]
@@ -288,7 +344,9 @@ class VroomSolver(VRPSolver):
                     elif "start_index" in v_params:
                         v_kwargs["start_index"] = start_idx
                     else:
-                        raise SolverRequestError("pyvroom Vehicle.__init__ lacks 'start'/'start_index'.")
+                        raise SolverRequestError(
+                            "pyvroom Vehicle.__init__ lacks 'start'/'start_index'."
+                        )
 
                     if "end" in v_params:
                         v_kwargs["end"] = end_xy
@@ -301,7 +359,9 @@ class VroomSolver(VRPSolver):
                     elif "start" in v_params:
                         v_kwargs["start"] = start_idx
                     else:
-                        raise SolverRequestError("pyvroom Vehicle.__init__ lacks 'start'/'start_index'.")
+                        raise SolverRequestError(
+                            "pyvroom Vehicle.__init__ lacks 'start'/'start_index'."
+                        )
 
                     if "end_index" in v_params:
                         v_kwargs["end_index"] = end_idx
@@ -336,13 +396,19 @@ class VroomSolver(VRPSolver):
                     # vroom wants [lon, lat]
                     ll = coords_latlon[loc] if coords_latlon is not None else None
                     if ll is None:
-                        raise SolverRequestError("Internal: missing coordinates for job in coord mode.")
+                        raise SolverRequestError(
+                            "Internal: missing coordinates for job in coord mode."
+                        )
                     job_xy = [float(ll[1]), float(ll[0])]
                     job = VroomJob(loc, location=job_xy, **j_kwargs)
                 else:
-                    if "location_index" in (inspect.signature(VroomJob.__init__).parameters.keys()):
+                    if "location_index" in (
+                        inspect.signature(VroomJob.__init__).parameters.keys()
+                    ):
                         job = VroomJob(loc, location_index=loc, **j_kwargs)
-                    elif "index" in (inspect.signature(VroomJob.__init__).parameters.keys()):
+                    elif "index" in (
+                        inspect.signature(VroomJob.__init__).parameters.keys()
+                    ):
                         job = VroomJob(loc, index=loc, **j_kwargs)
                     else:
                         # should not happen because of earlier probing
@@ -351,7 +417,11 @@ class VroomSolver(VRPSolver):
                 inp.add_job(job)
 
             # ---- Inject costs (bypass OSRM) ----
-            durations = matrix.durations if matrix.durations is not None else [[0.0] * n for _ in range(n)]
+            durations = (
+                matrix.durations
+                if matrix.durations is not None
+                else [[0.0] * n for _ in range(n)]
+            )
             if hasattr(inp, "set_costs"):
                 inp.set_costs(matrix.distances, durations)  # meters + seconds
             else:
@@ -396,28 +466,45 @@ class VroomSolver(VRPSolver):
                 except TypeError:
                     sol = inp.solve()
 
-
             # No routes? fallback NN as one consolidated route on vehicle 0
             if not hasattr(sol, "routes") or not sol.routes:
                 path = _nn_path(matrix.distances, depot)
-                td, tt, em = _route_totals(path, matrix, getattr(vehicles[0], "emissions_per_km", None))
+                td, tt, em = _route_totals(
+                    path, matrix, getattr(vehicles[0], "emissions_per_km", None)
+                )
                 return Routes(
                     status="success",
                     message="VROOM returned empty; fallback NN used",
-                    routes=[Route(vehicle_id=str(vehicles[0].id),
-                                  waypoint_ids=[str(i) for i in path],
-                                  total_distance=td, total_duration=tt, emissions=em)]
+                    routes=[
+                        Route(
+                            vehicle_id=str(vehicles[0].id),
+                            waypoint_ids=[str(i) for i in path],
+                            total_distance=td,
+                            total_duration=tt,
+                            emissions=em,
+                        )
+                    ],
                 )
 
             # ---- Extract per-vehicle routes ----
             out_routes: List[Route] = []
             for r in sol.routes:
                 k = getattr(r, "vehicle", None)
-                veh_id = str(vehicles[k].id) if isinstance(k, int) and 0 <= k < len(vehicles) else str(vehicles[0].id)
+                veh_id = (
+                    str(vehicles[k].id)
+                    if isinstance(k, int) and 0 <= k < len(vehicles)
+                    else str(vehicles[0].id)
+                )
 
                 path: List[int] = []
-                start_idx = int(getattr(vehicles[k], "start", depot) if isinstance(k, int) else depot)
-                end_idx = int(getattr(vehicles[k], "end", depot) if isinstance(k, int) else depot)
+                start_idx = int(
+                    getattr(vehicles[k], "start", depot)
+                    if isinstance(k, int)
+                    else depot
+                )
+                end_idx = int(
+                    getattr(vehicles[k], "end", depot) if isinstance(k, int) else depot
+                )
                 path.append(start_idx)
 
                 for st in getattr(r, "steps", []):
@@ -430,14 +517,24 @@ class VroomSolver(VRPSolver):
                 if path[-1] != end_idx:
                     path.append(end_idx)
 
-                td, tt, em = _route_totals(path, matrix, getattr(vehicles[k if isinstance(k, int) else 0], "emissions_per_km", None))
-                out_routes.append(Route(
-                    vehicle_id=veh_id,
-                    waypoint_ids=[str(i) for i in path],
-                    total_distance=td,          # meters
-                    total_duration=tt,          # seconds
-                    emissions=em,
-                ))
+                td, tt, em = _route_totals(
+                    path,
+                    matrix,
+                    getattr(
+                        vehicles[k if isinstance(k, int) else 0],
+                        "emissions_per_km",
+                        None,
+                    ),
+                )
+                out_routes.append(
+                    Route(
+                        vehicle_id=veh_id,
+                        waypoint_ids=[str(i) for i in path],
+                        total_distance=td,  # meters
+                        total_duration=tt,  # seconds
+                        emissions=em,
+                    )
+                )
 
             return Routes(status="success", message="VROOM solution", routes=out_routes)
 
@@ -448,11 +545,19 @@ class VroomSolver(VRPSolver):
         except Exception as e:
             # Last resort: one NN route on vehicle 0
             path = _nn_path(matrix.distances, depot)
-            td, tt, em = _route_totals(path, matrix, getattr(vehicles[0], "emissions_per_km", None))
+            td, tt, em = _route_totals(
+                path, matrix, getattr(vehicles[0], "emissions_per_km", None)
+            )
             return Routes(
                 status="success",
                 message=f"pyvroom error: {e}; fallback NN used",
-                routes=[Route(vehicle_id=str(vehicles[0].id),
-                              waypoint_ids=[str(i) for i in path],
-                              total_distance=td, total_duration=tt, emissions=em)]
+                routes=[
+                    Route(
+                        vehicle_id=str(vehicles[0].id),
+                        waypoint_ids=[str(i) for i in path],
+                        total_distance=td,
+                        total_duration=tt,
+                        emissions=em,
+                    )
+                ],
             )

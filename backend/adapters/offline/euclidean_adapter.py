@@ -3,12 +3,14 @@ from __future__ import annotations
 from math import sqrt
 from typing import Dict, Any, List, Optional
 
+
 class EuclideanAdapter:
     """
     Offline adapter that computes pairwise Euclidean distances
     from solver-space coordinates (x,y). Units are "euclidean units".
     If you want meters, pass a scale factor.
     """
+
     def __init__(self, meters_per_unit: Optional[float] = None):
         self.meters_per_unit = meters_per_unit
 
@@ -21,7 +23,10 @@ class EuclideanAdapter:
         """
         points = request.get("points") or request.get("waypoints") or []
         if not points and "node_coord_section" in request:
-            points = [{"x": float(x), "y": float(y)} for _, x, y in request["node_coord_section"]]
+            points = [
+                {"x": float(x), "y": float(y)}
+                for _, x, y in request["node_coord_section"]
+            ]
 
         coords: List[tuple] = []
         for p in points:
@@ -46,6 +51,6 @@ class EuclideanAdapter:
                 "distances": dist,
                 "durations": None,
                 "coordinates": None,
-                "units": "m" if self.meters_per_unit else "eu"
+                "units": "m" if self.meters_per_unit else "eu",
             }
         }

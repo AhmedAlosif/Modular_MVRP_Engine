@@ -36,7 +36,9 @@ def _get_capacity_from_fleet(fleet) -> int:
     return 10**9
 
 
-def write_vrplib(path: str | Path, waypoints: List, fleet, name: str = "INSTANCE") -> None:
+def write_vrplib(
+    path: str | Path, waypoints: List, fleet, name: str = "INSTANCE"
+) -> None:
     """
     Emit a simple CVRPLIB-like .vrp (nodes, demands, depot, capacity).
     `waypoints`: either list[Waypoint] or list[dict] with keys:

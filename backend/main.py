@@ -15,10 +15,12 @@ from core.load_plugins import load_plugins
 from contextlib import asynccontextmanager
 import os
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     load_plugins()  # <-- your plugin loading logic
     yield
+
 
 app = FastAPI(title="VRP Adapter Backend", lifespan=lifespan)
 
@@ -47,4 +49,5 @@ app.include_router(health_router)
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)

@@ -6,7 +6,10 @@ from typing import Optional, Dict, Any, List
 from fastapi import APIRouter, HTTPException, Query
 
 from file_handler.dataset_indexer import (
-    list_datasets, list_files, find_pair, normalize_dataset_name,
+    list_datasets,
+    list_files,
+    find_pair,
+    normalize_dataset_name,
 )
 from file_handler.file_factory import get_loader_for_filename
 from core.coords import add_display_lonlat_from_euclidean, looks_euclidean
@@ -15,11 +18,16 @@ router = APIRouter(tags=["benchmarks"])
 
 # ---------- helpers
 
+
 def _pub_item(it: Dict[str, Any]) -> Dict[str, Any]:
     name = it.get("name")
     abspath = it.get("abspath") or it.get("path")
     relpath = it.get("relpath")
-    ext = Path(name).suffix.lower() if name else (Path(abspath).suffix.lower() if abspath else None)
+    ext = (
+        Path(name).suffix.lower()
+        if name
+        else (Path(abspath).suffix.lower() if abspath else None)
+    )
     out = {
         "name": name,
         "path": abspath,
@@ -32,21 +40,28 @@ def _pub_item(it: Dict[str, Any]) -> Dict[str, Any]:
             out[k] = it[k]
     return {k: v for k, v in out.items() if v is not None}
 
+
 # ---------- routes
+
 
 @router.get("/benchmarks")
 def get_benchmarks():
     return {"datasets": list_datasets()}
 
+
 @router.get("/benchmarks/files")
 def get_benchmark_files(
-    dataset: str = Query(..., description="Dataset folder name as shown by /benchmarks"),
+    dataset: str = Query(
+        ..., description="Dataset folder name as shown by /benchmarks"
+    ),
     limit: int = Query(100, ge=1, le=2000),
     offset: int = Query(0, ge=0),
     q: Optional[str] = Query(None),
     sort: str = Query("name", pattern="^(name|size)$"),
     order: str = Query("asc", pattern="^(asc|desc)$"),
-    exts: Optional[str] = Query(None, description="Comma-separated extensions, e.g. .vrp,.xml,.sol"),
+    exts: Optional[str] = Query(
+        None, description="Comma-separated extensions, e.g. .vrp,.xml,.sol"
+    ),
     kind: Optional[str] = Query(None, description="'instances' | 'solutions' | None"),
 ):
     ds = normalize_dataset_name(dataset)
@@ -84,6 +99,7 @@ def get_benchmark_files(
         "offset": offset,
     }
 
+
 @router.get("/benchmarks/find")
 def find_instance_and_solution(dataset: str, name: str):
     ds = normalize_dataset_name(dataset)
@@ -94,14 +110,19 @@ def find_instance_and_solution(dataset: str, name: str):
         "status": "success",
     }
 
+
 @router.get("/benchmarks/load")
 def load_instance(
     dataset: str,
     name: str,
     compute_matrix: bool = True,
-    include_display: bool = Query(False, description="If true, add WGS84 display lon/lat synthesized from x/y"),
+    include_display: bool = Query(
+        False, description="If true, add WGS84 display lon/lat synthesized from x/y"
+    ),
     display_anchor: Optional[str] = Query(None, description="lon,lat (default 0,0)"),
-    display_scale_km: float = Query(40.0, description="Extent width/height in km, centered on anchor"),
+    display_scale_km: float = Query(
+        40.0, description="Extent width/height in km, centered on anchor"
+    ),
 ):
     ds = normalize_dataset_name(dataset)
     pair = find_pair(ds, name)
@@ -128,7 +149,9 @@ def load_instance(
                 a, b = display_anchor.split(",")
                 anchor_lon, anchor_lat = float(a), float(b)
             except Exception:
-                raise HTTPException(status_code=400, detail="display_anchor must be 'lon,lat'")
+                raise HTTPException(
+                    status_code=400, detail="display_anchor must be 'lon,lat'"
+                )
         add_display_lonlat_from_euclidean(
             data.get("waypoints", []),
             anchor_lon=anchor_lon,
@@ -143,13 +166,17 @@ def load_instance(
         data.setdefault("meta", {}).setdefault("notes", []).append(
             f"display synthesized @ anchor=({anchor_lon},{anchor_lat}), scale_km={display_scale_km}"
         )
-        data.setdefault("coordinate_spaces", {}).setdefault("display", {"type": "wgs84", "fields": ["lon", "lat"]})
+        data.setdefault("coordinate_spaces", {}).setdefault(
+            "display", {"type": "wgs84", "fields": ["lon", "lat"]}
+        )
 
     return {
         "status": "success",
         "instance": inst,
         "solution": pair.get("solution"),
         "instance_path": inst_path,
-        "solution_path": pair.get("solution", {}).get("path") if pair.get("solution") else None,
+        "solution_path": (
+            pair.get("solution", {}).get("path") if pair.get("solution") else None
+        ),
         "data": data,
     }

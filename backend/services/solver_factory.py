@@ -5,11 +5,13 @@ from core.interfaces import VRPSolver
 _solver_registry: Dict[str, Callable[[], VRPSolver]] = {}
 _registered = False
 
+
 def register_solver(name: str, ctor: Callable[[], VRPSolver]) -> None:
     key = name.lower().strip()
     if key in _solver_registry:
         raise ValueError(f"Solver '{name}' is already registered.")
     _solver_registry[key] = ctor
+
 
 def get_solver(name: str) -> VRPSolver:
     key = name.lower().strip()
@@ -20,11 +22,13 @@ def get_solver(name: str) -> VRPSolver:
         raise ValueError(f"Solver '{name}' is not registered.")
     return _solver_registry[key]()
 
+
 def list_solvers() -> List[str]:
     # <—— ensure the built-ins are registered before listing
     if not _solver_registry:
         register_solvers()
     return sorted(_solver_registry.keys())
+
 
 def register_solvers() -> None:
     """Call once at startup/tests to register built-ins."""

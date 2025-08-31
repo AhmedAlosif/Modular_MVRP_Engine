@@ -26,6 +26,7 @@ class GHGFactors:
     Stores per-km factors and (optional) speed-binned factors in grams CO2e per km.
     Keys are normalized lower-case tuples: (vehicle_type, fuel, scope) where scope ∈ {"TTW","WTW"}.
     """
+
     def __init__(
         self,
         per_km_table: Optional[Dict[Key, float]] = None,
@@ -38,7 +39,11 @@ class GHGFactors:
 
     @staticmethod
     def _norm_key(vehicle_type: str, fuel: str, scope: str) -> Key:
-        return (vehicle_type.strip().lower(), fuel.strip().lower(), scope.strip().upper())
+        return (
+            vehicle_type.strip().lower(),
+            fuel.strip().lower(),
+            scope.strip().upper(),
+        )
 
     # ---------- Public API used by your calculator ----------
     def has_speed_bins(self, vehicle_type: str, fuel: str, scope: str) -> bool:
@@ -60,7 +65,9 @@ class GHGFactors:
 
         raise KeyError(f"No per-km factor for {key} and no speed bins available")
 
-    def by_speed(self, vehicle_type: str, fuel: str, scope: str, speed_kmh: float) -> float:
+    def by_speed(
+        self, vehicle_type: str, fuel: str, scope: str, speed_kmh: float
+    ) -> float:
         """
         Returns grams CO2e per km using speed-binned factors.
         If the speed falls outside bins, returns the nearest bin’s factor.
@@ -148,16 +155,22 @@ class GHGFactors:
             ef_kgkm_col = _col(df, "kgco2e/km", "kg/km", "kg co2e per km")
 
             # Speed-bins: detect min/max speed & factor per km
-            speed_min_col = _col(df, "speed min", "min speed", "from", "lower bound (km/h)")
-            speed_max_col = _col(df, "speed max", "max speed", "to", "upper bound (km/h)")
-            ef_speed_gkm_col = _col(df, "gco2e/km", "g/km", "grams co2e per km")  # reuse ef if same col
+            speed_min_col = _col(
+                df, "speed min", "min speed", "from", "lower bound (km/h)"
+            )
+            speed_max_col = _col(
+                df, "speed max", "max speed", "to", "upper bound (km/h)"
+            )
+            ef_speed_gkm_col = _col(
+                df, "gco2e/km", "g/km", "grams co2e per km"
+            )  # reuse ef if same col
 
             # Skip if we can't even identify vehicle/fuel columns
             if not veh_col or not fuel_col:
                 continue
 
             # 1) Try per-km rows
-            if (ef_gkm_col or ef_kgkm_col):
+            if ef_gkm_col or ef_kgkm_col:
                 for _, row in df.iterrows():
                     v = row.get(veh_col)
                     f = row.get(fuel_col)
@@ -166,8 +179,12 @@ class GHGFactors:
                         continue
 
                     # Try to find scope; default to TTW if absent
-                    raw_scope = (row.get(scope_col) if scope_col else None)
-                    scope = str(raw_scope).strip().upper() if raw_scope and not pd.isna(raw_scope) else "TTW"
+                    raw_scope = row.get(scope_col) if scope_col else None
+                    scope = (
+                        str(raw_scope).strip().upper()
+                        if raw_scope and not pd.isna(raw_scope)
+                        else "TTW"
+                    )
                     if scope not in scope_candidates:
                         # If scope value looks like "Well-to-wheel", normalize to WTW; else TTW
                         if "WELL" in scope or "WTW" in scope:
@@ -193,7 +210,11 @@ class GHGFactors:
                         per_km_table[key] = min(per_km_table[key], ef)
 
             # 2) Try speed-binned rows
-            if speed_min_col and speed_max_col and (ef_speed_gkm_col or ef_gkm_col or ef_kgkm_col):
+            if (
+                speed_min_col
+                and speed_max_col
+                and (ef_speed_gkm_col or ef_gkm_col or ef_kgkm_col)
+            ):
                 # choose an EF column preference
                 ef_col = ef_speed_gkm_col or ef_gkm_col or ef_kgkm_col
                 for _, row in df.iterrows():
@@ -206,8 +227,12 @@ class GHGFactors:
                         continue
 
                     # scope normalize
-                    raw_scope = (row.get(scope_col) if scope_col else None)
-                    scope = str(raw_scope).strip().upper() if raw_scope and not pd.isna(raw_scope) else "TTW"
+                    raw_scope = row.get(scope_col) if scope_col else None
+                    scope = (
+                        str(raw_scope).strip().upper()
+                        if raw_scope and not pd.isna(raw_scope)
+                        else "TTW"
+                    )
                     if scope not in scope_candidates:
                         if "WELL" in scope or "WTW" in scope:
                             scope = "WTW"
@@ -221,7 +246,11 @@ class GHGFactors:
 
                     key = cls._norm_key(str(v), str(f), scope)
                     speed_tables.setdefault(key, []).append(
-                        SpeedBin(min_kmh=float(smin), max_kmh=float(smax), ef_g_per_km=float(ef_val))
+                        SpeedBin(
+                            min_kmh=float(smin),
+                            max_kmh=float(smax),
+                            ef_g_per_km=float(ef_val),
+                        )
                     )
 
         if not per_km_table and not speed_tables:

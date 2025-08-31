@@ -7,7 +7,6 @@ from typing import List, Optional
 from pathlib import Path
 import shutil
 import os
-import time
 
 # parse/write helpers (reuse your existing loaders/writers)
 from file_handler.file_factory import load_any  # or your central parse shim
@@ -16,10 +15,13 @@ from file_handler.vrplib_writer import write_vrplib  # your existing writer
 # ---- Root directory for custom files ----
 try:
     from config import get_settings  # type: ignore
+
     CUSTOM_ROOT = Path(get_settings().CUSTOM_DATA_DIR).resolve()
 except Exception:
     # fallback to Project/backend/data/custom_data
-    CUSTOM_ROOT = (Path(__file__).resolve().parents[1] / "data" / "custom_data").resolve()
+    CUSTOM_ROOT = (
+        Path(__file__).resolve().parents[1] / "data" / "custom_data"
+    ).resolve()
 
 CUSTOM_ROOT.mkdir(parents=True, exist_ok=True)
 
@@ -28,19 +30,22 @@ router = APIRouter(prefix="/files", tags=["files"])
 
 # ---------- Models ----------
 
+
 class FileEntry(BaseModel):
-    path: str            # relative to CUSTOM_ROOT
+    path: str  # relative to CUSTOM_ROOT
     name: str
     size: int
     mtime: float
-    kind: str            # "file" | "dir"
+    kind: str  # "file" | "dir"
     ext: Optional[str] = None
+
 
 class ListResponse(BaseModel):
     dataset: str
     cwd: str
     total: int
     files: List[FileEntry]
+
 
 class FindResponse(BaseModel):
     dataset: str
@@ -49,13 +54,17 @@ class FindResponse(BaseModel):
     total: int
     files: List[FileEntry]
 
+
 class ParseRequest(BaseModel):
-    path: str                        # relative path under CUSTOM_ROOT
-    kind: Optional[str] = None       # "csv" | "geojson" | "vrplib" | "xml" | "solomon" | None (auto)
-    options: Optional[dict] = None   # passed to loader
+    path: str  # relative path under CUSTOM_ROOT
+    kind: Optional[str] = (
+        None  # "csv" | "geojson" | "vrplib" | "xml" | "solomon" | None (auto)
+    )
+    options: Optional[dict] = None  # passed to loader
+
 
 class WriteVRPLIBRequest(BaseModel):
-    path: str                        # e.g. "exports/out.vrp"
+    path: str  # e.g. "exports/out.vrp"
     waypoints: list
     fleet: dict
     depot_index: int = 0
@@ -65,6 +74,7 @@ class WriteVRPLIBRequest(BaseModel):
 
 # ---------- Helpers ----------
 
+
 def _safe_join(rel: str) -> Path:
     """
     Prevent path traversal. Returns absolute path within CUSTOM_ROOT or raises 400.
@@ -72,8 +82,11 @@ def _safe_join(rel: str) -> Path:
     rel = rel.strip().lstrip("/\\")
     p = (CUSTOM_ROOT / rel).resolve()
     if CUSTOM_ROOT not in p.parents and p != CUSTOM_ROOT:
-        raise HTTPException(status_code=400, detail="Invalid path (outside custom_data)")
+        raise HTTPException(
+            status_code=400, detail="Invalid path (outside custom_data)"
+        )
     return p
+
 
 def _entry(p: Path) -> FileEntry:
     stat = p.stat()
@@ -88,6 +101,7 @@ def _entry(p: Path) -> FileEntry:
         ext=ext,
     )
 
+
 def _walk(root: Path):
     for dirpath, dirnames, filenames in os.walk(root):
         d = Path(dirpath)
@@ -98,6 +112,7 @@ def _walk(root: Path):
 
 
 # ---------- Endpoints ----------
+
 
 @router.get("/datasets")
 def list_datasets():
@@ -110,7 +125,9 @@ def list_files(
     dataset: str = Query(default="custom_data"),
     cwd: str = Query(default=""),
     q: Optional[str] = Query(default=None),
-    exts: Optional[str] = Query(default=None, description="Comma-separated (e.g. .csv,.geojson)"),
+    exts: Optional[str] = Query(
+        default=None, description="Comma-separated (e.g. .csv,.geojson)"
+    ),
     limit: int = 50,
     offset: int = 0,
     sort: str = "name",
@@ -133,16 +150,18 @@ def list_files(
                 continue
         candidates.append(child)
 
-    reverse = (order.lower() == "desc")
+    reverse = order.lower() == "desc"
     if sort == "name":
         candidates.sort(key=lambda p: p.name.lower(), reverse=reverse)
     elif sort == "size":
-        candidates.sort(key=lambda p: (p.stat().st_size if p.is_file() else -1), reverse=reverse)
+        candidates.sort(
+            key=lambda p: (p.stat().st_size if p.is_file() else -1), reverse=reverse
+        )
     elif sort == "mtime":
         candidates.sort(key=lambda p: p.stat().st_mtime, reverse=reverse)
 
     total = len(candidates)
-    page = candidates[offset: offset + limit]
+    page = candidates[offset : offset + limit]
     return ListResponse(
         dataset="custom_data",
         cwd=str(base.relative_to(CUSTOM_ROOT)) if base != CUSTOM_ROOT else "",
@@ -174,7 +193,7 @@ def find_files(
         all_paths.append(p)
 
     total = len(all_paths)
-    page = all_paths[offset: offset + limit]
+    page = all_paths[offset : offset + limit]
     return FindResponse(
         dataset="custom_data",
         q=q,
@@ -252,7 +271,7 @@ def write_vrplib_file(req: WriteVRPLIBRequest):
         write_vrplib(
             out_path=str(p),
             waypoints=req.waypoints,
-            fleet=req.fleet,              # ← ensure your writer signature matches
+            fleet=req.fleet,  # ← ensure your writer signature matches
             depot_index=req.depot_index,
             matrix=req.matrix,
             **(req.options or {}),

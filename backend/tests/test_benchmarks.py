@@ -1,9 +1,9 @@
 import os
-from pathlib import Path
 import pytest
 
 # We rely on the existing TestClient "client" fixture from your conftest.
 # If you don't have it, uncomment the local client fixture at the bottom.
+
 
 @pytest.fixture
 def tmp_datasets(tmp_path, monkeypatch):
@@ -37,7 +37,9 @@ def tmp_datasets(tmp_path, monkeypatch):
 
     monkeypatch.setattr(di, "DATA_DIR", str(base), raising=False)
     # Keep the list tight so unrelated folders don’t show up
-    monkeypatch.setattr(di, "BENCHMARK_INCLUDE_FOLDERS", {"solomon", "vrp-set-xml100"}, raising=False)
+    monkeypatch.setattr(
+        di, "BENCHMARK_INCLUDE_FOLDERS", {"solomon", "vrp-set-xml100"}, raising=False
+    )
     monkeypatch.setattr(di, "BENCHMARK_EXCLUDE_FOLDERS", set(), raising=False)
 
     # Some versions read from Settings; patch that too if present
@@ -55,7 +57,7 @@ def tmp_datasets(tmp_path, monkeypatch):
     return base
 
 
-def test_list_benchmarks(client, tmp_datasets):
+def test_list_benchmarks(client):
     r = client.get("/benchmarks")
     assert r.status_code == 200, r.text
     data = r.json()
@@ -64,8 +66,10 @@ def test_list_benchmarks(client, tmp_datasets):
     assert "Vrp-Set-XML100" in names
 
 
-def test_list_files_solomon(client, tmp_datasets):
-    r = client.get("/benchmarks/files", params={"dataset": "Solomon", "limit": 50, "offset": 0})
+def test_list_files_solomon(client):
+    r = client.get(
+        "/benchmarks/files", params={"dataset": "Solomon", "limit": 50, "offset": 0}
+    )
     assert r.status_code == 200, r.text
     items = r.json().get("items") or r.json()
     filenames = [it["name"] for it in items]
@@ -78,8 +82,11 @@ def test_list_files_solomon(client, tmp_datasets):
     assert any(k in c101 for k in ("solution", "pair", "solution_path"))
 
 
-def test_find_xml_pair(client, tmp_datasets):
-    r = client.get("/benchmarks/find", params={"dataset": "Vrp-Set-XML100", "name": "XML100_3375_23"})
+def test_find_xml_pair(client):
+    r = client.get(
+        "/benchmarks/find",
+        params={"dataset": "Vrp-Set-XML100", "name": "XML100_3375_23"},
+    )
     assert r.status_code == 200, r.text
     data = r.json()
     # accept either flat or nested shape
@@ -89,24 +96,30 @@ def test_find_xml_pair(client, tmp_datasets):
     assert sol and sol["name"].endswith(".sol")
 
 
-def test_files_search_and_paging(client, tmp_datasets):
+def test_files_search_and_paging(client):
     # search for the tail item by pattern
-    r = client.get("/benchmarks/files", params={
-        "dataset": "Vrp-Set-XML100",
-        "q": "3375_23",
-        "kind": "instances",
-        "limit": 10,
-        "offset": 0,
-        "sort": "name",
-        "order": "asc",
-    })
+    r = client.get(
+        "/benchmarks/files",
+        params={
+            "dataset": "Vrp-Set-XML100",
+            "q": "3375_23",
+            "kind": "instances",
+            "limit": 10,
+            "offset": 0,
+            "sort": "name",
+            "order": "asc",
+        },
+    )
     assert r.status_code == 200, r.text
     items = r.json().get("items") or r.json()
     names = [it["name"] for it in (r.json().get("items") or r.json())]
     assert names == ["XML100_3375_23.vrp"]
-    
+
     # pagination sanity
-    r2 = client.get("/benchmarks/files", params={"dataset": "Vrp-Set-XML100", "limit": 1, "offset": 1})
+    r2 = client.get(
+        "/benchmarks/files",
+        params={"dataset": "Vrp-Set-XML100", "limit": 1, "offset": 1},
+    )
     assert r2.status_code == 200
     items2 = r2.json().get("items") or r2.json()
     assert len(items2) == 1

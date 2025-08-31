@@ -1,6 +1,6 @@
 # services/solvers/ortools_solver.py
 from __future__ import annotations
-from typing import List, Optional, Dict, Any, Tuple
+from typing import List, Optional, Any, Tuple
 from ortools.constraint_solver import pywrapcp, routing_enums_pb2
 
 from core.interfaces import VRPSolver
@@ -23,26 +23,29 @@ def _align_len(arr, N, default):
         return arr[:N]
     return arr + [default] * (N - len(arr))
 
+
 def _tw_pair_to_seconds(a, b) -> Tuple[int, int]:
     """Heuristic: treat small numbers as hours/minutes; else already seconds."""
     a = float(a if a is not None else 0)
     b = float(b if b is not None else 0)
     mx = max(a, b)
-    if mx <= 48:        # hours → seconds
+    if mx <= 48:  # hours → seconds
         return int(a * 3600), int(b * 3600)
-    if mx <= 1440:      # minutes → seconds
+    if mx <= 1440:  # minutes → seconds
         return int(a * 60), int(b * 60)
     return int(a), int(b)
+
 
 def _svc_to_seconds(s) -> int:
     s = float(s or 0)
     if s <= 0:
         return 0
-    if s <= 48:         # hours
+    if s <= 48:  # hours
         return int(s * 3600)
-    if s <= 1440:       # minutes
+    if s <= 1440:  # minutes
         return int(s * 60)
-    return int(s)       # seconds
+    return int(s)  # seconds
+
 
 def _normalize_inputs_for_matrix(
     *,
@@ -51,7 +54,7 @@ def _normalize_inputs_for_matrix(
     demands,
     node_service_times,
     node_time_windows,
-    vehicle_time_windows,   # list[(start,end)] or None
+    vehicle_time_windows,  # list[(start,end)] or None
     vehicles_count: int,
 ):
     # Matrix shape
@@ -136,7 +139,9 @@ class OrToolsSolver(VRPSolver):
         weights = weights or {}
         w_dist = float(weights.get("distance", 1.0))
         w_time = float(weights.get("time", 0.0))
-        vehicle_fixed_cost = float(weights.get("vehicle_fixed_cost", 100.0))  # distance-units proxy
+        vehicle_fixed_cost = float(
+            weights.get("vehicle_fixed_cost", 100.0)
+        )  # distance-units proxy
 
         allow_drop = bool(kwargs.get("allow_drop", False))
         drop_penalty = kwargs.get("drop_penalty", None)  # int
@@ -197,7 +202,10 @@ class OrToolsSolver(VRPSolver):
 
         # ----------------- Capacity dimension (only if any demand) -----------------
         if any(int(x) != 0 for x in (demands or [])):
-            caps = [int(v.capacity[0]) if (v.capacity and len(v.capacity) > 0) else 10**9 for v in fleet]
+            caps = [
+                int(v.capacity[0]) if (v.capacity and len(v.capacity) > 0) else 10**9
+                for v in fleet
+            ]
 
             def demand_cb(from_index: int) -> int:
                 i = manager.IndexToNode(from_index)
@@ -206,9 +214,9 @@ class OrToolsSolver(VRPSolver):
             demand_index = routing.RegisterUnaryTransitCallback(demand_cb)
             routing.AddDimensionWithVehicleCapacity(
                 demand_index,
-                0,       # no slack
+                0,  # no slack
                 caps,
-                True,    # start at 0
+                True,  # start at 0
                 "Capacity",
             )
 
@@ -218,11 +226,13 @@ class OrToolsSolver(VRPSolver):
             svc = service_times  # already seconds
 
             if durations is not None:
+
                 def time_cb(from_index: int, to_index: int) -> int:
                     i = manager.IndexToNode(from_index)
                     j = manager.IndexToNode(to_index)
                     travel = int(round(durations[i][j]))
                     return int(travel + (svc[i] or 0))
+
             else:
                 # No durations: use distances as time units
                 def time_cb(from_index: int, to_index: int) -> int:
@@ -235,22 +245,28 @@ class OrToolsSolver(VRPSolver):
 
             # horizon: max high end from node TWs, else INF
             horizon = None
-            highs = [int(b) for (a, b) in node_time_windows if (a is not None and b is not None)]
+            highs = [
+                int(b)
+                for (a, b) in node_time_windows
+                if (a is not None and b is not None)
+            ]
             if highs:
                 horizon = max(highs)
 
             routing.AddDimension(
                 time_index,
-                INF,                      # waiting slack allowed
-                int(horizon or INF),      # max cumul
-                True,                     # start cumul at 0
+                INF,  # waiting slack allowed
+                int(horizon or INF),  # max cumul
+                True,  # start cumul at 0
                 "Time",
             )
             time_dimension = routing.GetDimensionOrDie("Time")
 
             # Apply node time windows (seconds)
             for node, (a, b) in enumerate(node_time_windows):
-                time_dimension.CumulVar(manager.NodeToIndex(node)).SetRange(int(a), int(b))
+                time_dimension.CumulVar(manager.NodeToIndex(node)).SetRange(
+                    int(a), int(b)
+                )
 
             # Apply vehicle time windows (seconds) on starts/ends
             for v_id, (vs, ve) in enumerate(vehicle_time_windows):
@@ -259,8 +275,12 @@ class OrToolsSolver(VRPSolver):
 
             # Finalizers help feasibility on large VRPTW
             for v_id in range(len(fleet)):
-                routing.AddVariableMinimizedByFinalizer(time_dimension.CumulVar(routing.Start(v_id)))
-                routing.AddVariableMinimizedByFinalizer(time_dimension.CumulVar(routing.End(v_id)))
+                routing.AddVariableMinimizedByFinalizer(
+                    time_dimension.CumulVar(routing.Start(v_id))
+                )
+                routing.AddVariableMinimizedByFinalizer(
+                    time_dimension.CumulVar(routing.End(v_id))
+                )
 
         # ----------------- Pickup & Delivery -----------------
         if pickup_delivery_pairs:
@@ -269,7 +289,9 @@ class OrToolsSolver(VRPSolver):
                 d_idx = manager.NodeToIndex(int(pair.delivery))
                 routing.AddPickupAndDelivery(p_idx, d_idx)
                 # same vehicle
-                routing.solver().Add(routing.VehicleVar(p_idx) == routing.VehicleVar(d_idx))
+                routing.solver().Add(
+                    routing.VehicleVar(p_idx) == routing.VehicleVar(d_idx)
+                )
                 # precedence via time
                 if time_dimension is not None:
                     routing.solver().Add(
@@ -282,7 +304,9 @@ class OrToolsSolver(VRPSolver):
                 # robust, very large default – discourages dropping unless truly infeasible
                 max_d = max(max(r) for r in matrix.distances)
                 max_t = max(max(r) for r in (matrix.durations or matrix.distances))
-                est_arc = (w_dist * max_d) + (w_time * (max_t / 3600.0 if matrix.durations else max_t))
+                est_arc = (w_dist * max_d) + (
+                    w_time * (max_t / 3600.0 if matrix.durations else max_t)
+                )
                 drop_penalty = int(max(10**9, round(est_arc * 10**6)))
 
             for node in range(n):
@@ -293,16 +317,23 @@ class OrToolsSolver(VRPSolver):
         # ----------------- Search parameters -----------------
         search = pywrapcp.DefaultRoutingSearchParameters()
         # First solution
-        fs_map = {k: getattr(routing_enums_pb2.FirstSolutionStrategy, k)
-                  for k in dir(routing_enums_pb2.FirstSolutionStrategy) if not k.startswith("_")}
+        fs_map = {
+            k: getattr(routing_enums_pb2.FirstSolutionStrategy, k)
+            for k in dir(routing_enums_pb2.FirstSolutionStrategy)
+            if not k.startswith("_")
+        }
         search.first_solution_strategy = fs_map.get(
             first_solution, routing_enums_pb2.FirstSolutionStrategy.PATH_CHEAPEST_ARC
         )
         # Metaheuristic
-        mh_map = {k: getattr(routing_enums_pb2.LocalSearchMetaheuristic, k)
-                  for k in dir(routing_enums_pb2.LocalSearchMetaheuristic) if not k.startswith("_")}
+        mh_map = {
+            k: getattr(routing_enums_pb2.LocalSearchMetaheuristic, k)
+            for k in dir(routing_enums_pb2.LocalSearchMetaheuristic)
+            if not k.startswith("_")
+        }
         search.local_search_metaheuristic = mh_map.get(
-            metaheuristic, routing_enums_pb2.LocalSearchMetaheuristic.GUIDED_LOCAL_SEARCH
+            metaheuristic,
+            routing_enums_pb2.LocalSearchMetaheuristic.GUIDED_LOCAL_SEARCH,
         )
         search.time_limit.FromSeconds(int(time_limit))
         if log_search:
@@ -320,10 +351,19 @@ class OrToolsSolver(VRPSolver):
             3: "ROUTING_FAIL_TIMEOUT",
             4: "ROUTING_INVALID",
         }
-        status_name = status_map.get(status_id, "ROUTING_SUCCESS" if solution is not None else f"UNKNOWN_STATUS_{status_id}")
+        status_name = status_map.get(
+            status_id,
+            (
+                "ROUTING_SUCCESS"
+                if solution is not None
+                else f"UNKNOWN_STATUS_{status_id}"
+            ),
+        )
 
         if solution is None:
-            raise SolverError(f"No feasible solution found. OR-Tools status={status_id} ({status_name}).")
+            raise SolverError(
+                f"No feasible solution found. OR-Tools status={status_id} ({status_name})."
+            )
 
         # ----------- Extract routes -----------
         routes: List[Route] = []
@@ -344,7 +384,9 @@ class OrToolsSolver(VRPSolver):
                 if not routing.IsEnd(nxt):
                     i = node
                     j = manager.IndexToNode(nxt)
-                    total_km += float(matrix.distances[i][j]) if matrix.distances else 0.0
+                    total_km += (
+                        float(matrix.distances[i][j]) if matrix.distances else 0.0
+                    )
                     if matrix.durations:
                         total_sec += float(matrix.durations[i][j])
                 index = nxt
@@ -360,7 +402,11 @@ class OrToolsSolver(VRPSolver):
 
             # Skip depot-only routes
             only_depot = all(n_node == depot_node for n_node in path_nodes)
-            if only_depot and total_km == 0 and (not matrix.durations or total_sec == 0):
+            if (
+                only_depot
+                and total_km == 0
+                and (not matrix.durations or total_sec == 0)
+            ):
                 continue
 
             total_km_all += total_km
@@ -372,7 +418,10 @@ class OrToolsSolver(VRPSolver):
                     waypoint_ids=[str(n) for n in path_nodes],
                     total_distance=total_km,
                     total_duration=int(round(total_sec)) if total_sec else None,
-                    emissions=(total_km * float(getattr(veh, "emissions_per_km", 0.0) or 0.0)) or None,
+                    emissions=(
+                        total_km * float(getattr(veh, "emissions_per_km", 0.0) or 0.0)
+                    )
+                    or None,
                     metadata={"status": status_name},
                 )
             )

@@ -1,6 +1,7 @@
 # services/file_loader/solution_loader.py
 from typing import Dict, List
 
+
 def load_solution_sol(path: str) -> Dict:
     routes: List[Dict[str, List[int]]] = []
     objective = None

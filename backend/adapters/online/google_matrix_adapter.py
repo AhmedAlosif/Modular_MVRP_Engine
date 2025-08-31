@@ -1,5 +1,4 @@
 import httpx
-from typing import List
 from core.interfaces import DistanceMatrixAdapter
 from models.distance_matrix import MatrixRequest, MatrixResult
 from core.exceptions import DistanceMatrixRequestError
@@ -14,14 +13,18 @@ class GoogleMatrixAdapter(DistanceMatrixAdapter):
     async def get_matrix(self, request: MatrixRequest) -> MatrixResult:
         try:
             if not request.origins or not request.destinations:
-                raise DistanceMatrixRequestError("Google Matrix requires both 'origins' and 'destinations'.")
+                raise DistanceMatrixRequestError(
+                    "Google Matrix requires both 'origins' and 'destinations'."
+                )
 
             # Extract optional mode from parameters
             mode = request.parameters.get("mode", "driving")
 
             # Format origins and destinations as required by Google API
             origins = "|".join(f"{coord.lat},{coord.lon}" for coord in request.origins)
-            destinations = "|".join(f"{coord.lat},{coord.lon}" for coord in request.destinations)
+            destinations = "|".join(
+                f"{coord.lat},{coord.lon}" for coord in request.destinations
+            )
 
             # Compose request parameters
             params = {

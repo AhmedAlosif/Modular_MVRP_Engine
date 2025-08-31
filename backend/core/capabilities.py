@@ -5,28 +5,63 @@ import os
 _SOLVER_CAPS: Dict[str, Dict[str, Any]] = {
     "ortools": {
         "vrp_types": {
-            "TSP":   {"required": ["matrix.distances", "fleet>=1", "depot_index"],
-                      "optional": ["matrix.durations", "weights"]},
-            "CVRP":  {"required": ["matrix.distances", "fleet>=1", "demands", "depot_index"],
-                      "optional": ["matrix.durations", "node_service_times", "weights"]},
-            "VRPTW": {"required": ["matrix.durations", "node_time_windows", "fleet>=1", "depot_index"],
-                      "optional": ["matrix.distances", "node_service_times", "weights"]},
-            "PDPTW": {"required": ["matrix.durations", "node_time_windows", "pickup_delivery_pairs",
-                                   "demands", "fleet>=1", "depot_index"],
-                      "optional": ["matrix.distances", "node_service_times", "weights"]},
+            "TSP": {
+                "required": ["matrix.distances", "fleet>=1", "depot_index"],
+                "optional": ["matrix.durations", "weights"],
+            },
+            "CVRP": {
+                "required": ["matrix.distances", "fleet>=1", "demands", "depot_index"],
+                "optional": ["matrix.durations", "node_service_times", "weights"],
+            },
+            "VRPTW": {
+                "required": [
+                    "matrix.durations",
+                    "node_time_windows",
+                    "fleet>=1",
+                    "depot_index",
+                ],
+                "optional": ["matrix.distances", "node_service_times", "weights"],
+            },
+            "PDPTW": {
+                "required": [
+                    "matrix.durations",
+                    "node_time_windows",
+                    "pickup_delivery_pairs",
+                    "demands",
+                    "fleet>=1",
+                    "depot_index",
+                ],
+                "optional": ["matrix.distances", "node_service_times", "weights"],
+            },
         }
     },
     "pyomo": {
         "vrp_types": {
-            "TSP":   {"required": ["matrix.distances", "fleet>=1", "depot_index"], "optional": []},
-            "CVRP":  {"required": ["matrix.distances", "fleet>=1", "demands", "depot_index"], "optional": []},
-            "VRPTW": {"required": ["matrix.durations", "node_time_windows", "fleet>=1", "depot_index"], "optional": []},
+            "TSP": {
+                "required": ["matrix.distances", "fleet>=1", "depot_index"],
+                "optional": [],
+            },
+            "CVRP": {
+                "required": ["matrix.distances", "fleet>=1", "demands", "depot_index"],
+                "optional": [],
+            },
+            "VRPTW": {
+                "required": [
+                    "matrix.durations",
+                    "node_time_windows",
+                    "fleet>=1",
+                    "depot_index",
+                ],
+                "optional": [],
+            },
         }
     },
     "vroom": {
         "vrp_types": {
-            "TSP": {"required": ["waypoints|matrix", "fleet==1", "depot_index"],
-                    "optional": ["weights"]}
+            "TSP": {
+                "required": ["waypoints|matrix", "fleet==1", "depot_index"],
+                "optional": ["weights"],
+            }
         }
     },
     "mapbox_optimizer": {
@@ -34,35 +69,51 @@ _SOLVER_CAPS: Dict[str, Dict[str, Any]] = {
             "TSP": {
                 "required": ["waypoints", "fleet==1"],
                 "optional": [
-                    "roundtrip", "depot_index", "end_index",
-                    "profile", "annotations", "radiuses", "bearings",
-                    "approaches", "geometries", "steps"
-                ]
+                    "roundtrip",
+                    "depot_index",
+                    "end_index",
+                    "profile",
+                    "annotations",
+                    "radiuses",
+                    "bearings",
+                    "approaches",
+                    "geometries",
+                    "steps",
+                ],
             },
             "PD": {
                 "required": ["waypoints", "fleet==1", "pickup_delivery_pairs"],
                 "optional": [
-                    "roundtrip", "depot_index", "end_index",
-                    "profile", "annotations", "radiuses", "bearings",
-                    "approaches", "geometries", "steps"
-                ]
-            }
+                    "roundtrip",
+                    "depot_index",
+                    "end_index",
+                    "profile",
+                    "annotations",
+                    "radiuses",
+                    "bearings",
+                    "approaches",
+                    "geometries",
+                    "steps",
+                ],
+            },
         }
-    }
+    },
 }
 
 _ADAPTER_CAPS: Dict[str, Dict[str, Any]] = {
-    "haversine":        {"provides": ["matrix.distances"]},
-    "osm_graph":        {"provides": ["matrix.distances", "matrix.durations"]},
+    "haversine": {"provides": ["matrix.distances"]},
+    "osm_graph": {"provides": ["matrix.distances", "matrix.durations"]},
     "openrouteservice": {"provides": ["matrix.distances", "matrix.durations"]},
-    "google":           {"provides": ["matrix.distances", "matrix.durations"]},
-    "google_routes":    {"provides": ["matrix.distances", "matrix.durations"]},
-    "mapbox":           {"provides": ["matrix.distances", "matrix.durations"]},
+    "google": {"provides": ["matrix.distances", "matrix.durations"]},
+    "google_routes": {"provides": ["matrix.distances", "matrix.durations"]},
+    "mapbox": {"provides": ["matrix.distances", "matrix.durations"]},
 }
+
 
 def _ensure_solver_registry_names() -> List[str]:
     try:
         from services.solver_factory import register_solvers, list_solvers
+
         register_solvers()  # idempotent
         names = list_solvers()
         if names:
@@ -70,6 +121,7 @@ def _ensure_solver_registry_names() -> List[str]:
     except Exception:
         pass
     return ["ortools", "pyomo", "vroom"]
+
 
 def filter_registered(
     registered_solvers: List[str],

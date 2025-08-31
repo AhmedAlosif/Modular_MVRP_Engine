@@ -5,6 +5,7 @@ from core.adapter_factory_registry import AdapterFactoryRegistry
 
 router = APIRouter(prefix="/capabilities", tags=["capabilities"])
 
+
 @router.get("", summary="List solver/adapter capabilities")
 def get_capabilities():
     register_solvers()  # idempotent

@@ -1,7 +1,7 @@
 # backend/data_acquisition/open_source/openstreetmap.py
 from __future__ import annotations
 import time
-from typing import Iterable, List, Optional, Tuple, Dict, Any
+from typing import List, Optional, Tuple, Dict, Any
 import requests
 
 DEFAULT_TIMEOUT = 120
@@ -15,15 +15,22 @@ OVERPASS_MIRRORS = [
 
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 
+
 def _sleep():
     time.sleep(RATE_LIMIT_SLEEP)
+
 
 def _post_overpass(ql: str, *, timeout: int = DEFAULT_TIMEOUT) -> Dict[str, Any]:
     last_err: Exception | None = None
     for url in OVERPASS_MIRRORS:
         _sleep()
         try:
-            r = requests.post(url, data={"data": ql}, timeout=timeout + 10, headers={"User-Agent": "vrp-tool/1.0"})
+            r = requests.post(
+                url,
+                data={"data": ql},
+                timeout=timeout + 10,
+                headers={"User-Agent": "vrp-tool/1.0"},
+            )
             if r.status_code in (429, 502, 503, 504):
                 last_err = RuntimeError(f"{url} -> {r.status_code} {r.text[:200]}")
                 continue
@@ -32,8 +39,14 @@ def _post_overpass(ql: str, *, timeout: int = DEFAULT_TIMEOUT) -> Dict[str, Any]
         except Exception as e:
             last_err = e
             continue
-    print("\n--- Overpass QL (FAILED) ---\n", ql, "\n----------------------------\n", flush=True)
+    print(
+        "\n--- Overpass QL (FAILED) ---\n",
+        ql,
+        "\n----------------------------\n",
+        flush=True,
+    )
     raise RuntimeError(f"overpass_error: {last_err}")
+
 
 def _build_selector(key: str, value: str, regex: bool = False) -> str:
     if value is None:
@@ -57,10 +70,12 @@ def _build_selector(key: str, value: str, regex: bool = False) -> str:
 
     return (f'"{key}"~"{v}"') if use_rx else (f'"{key}"="{v}"')
 
+
 def _normalize_key_value(key: str, value: str) -> tuple[str, str]:
     if key == "amenity" and value == "bus_stop":
         return "highway", "bus_stop"
     return key, value
+
 
 def _elements_to_fc(doc: Dict[str, Any]) -> Dict[str, Any]:
     feats: List[Dict[str, Any]] = []
@@ -81,14 +96,18 @@ def _elements_to_fc(doc: Dict[str, Any]) -> Dict[str, Any]:
 
         if lon is None or lat is None:
             continue
-        feats.append({
-            "type": "Feature",
-            "geometry": {"type": "Point", "coordinates": [float(lon), float(lat)]},
-            "properties": props,
-        })
+        feats.append(
+            {
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [float(lon), float(lat)]},
+                "properties": props,
+            }
+        )
     return {"type": "FeatureCollection", "features": feats}
 
+
 # ---------- Nominatim (place -> bbox) ----------
+
 
 def place_to_bbox(place: str) -> Tuple[float, float, float, float]:
     """
@@ -109,12 +128,17 @@ def place_to_bbox(place: str) -> Tuple[float, float, float, float]:
     # boundingbox is [south, north, west, east] as strings
     if not (isinstance(bb, list) and len(bb) == 4):
         raise RuntimeError(f"Nominatim: invalid bbox for {place}")
-    south = float(bb[0]); north = float(bb[1]); west = float(bb[2]); east = float(bb[3])
+    south = float(bb[0])
+    north = float(bb[1])
+    west = float(bb[2])
+    east = float(bb[3])
     return (south, west, north, east)
+
 
 # ------------------------------
 #  Public helpers (same names)
 # ------------------------------
+
 
 def nodes_by_tag_in_bbox(
     bbox: Tuple[float, float, float, float],
@@ -137,6 +161,7 @@ out body qt{lim};
     doc = _post_overpass(ql, timeout=timeout)
     return _elements_to_fc(doc)
 
+
 def nodes_by_tag_in_place(
     place: str,
     key: str,
@@ -147,7 +172,10 @@ def nodes_by_tag_in_place(
     limit: Optional[int] = None,
 ) -> Dict[str, Any]:
     bbox = place_to_bbox(place)
-    return nodes_by_tag_in_bbox(bbox, key, value, regex=regex, timeout=timeout, limit=limit)
+    return nodes_by_tag_in_bbox(
+        bbox, key, value, regex=regex, timeout=timeout, limit=limit
+    )
+
 
 def pois_by_tag_in_place(
     place: str,
@@ -169,11 +197,23 @@ def pois_by_tag_in_place(
     sel = _build_selector(key, value, regex=regex)
     lim = f" {int(limit)}" if isinstance(limit, int) and limit > 0 else ""
 
-    parts = ["node[{sel}]({s},{w},{n},{e});".format(sel=sel, s=south, w=west, n=north, e=east)]
+    parts = [
+        "node[{sel}]({s},{w},{n},{e});".format(
+            sel=sel, s=south, w=west, n=north, e=east
+        )
+    ]
     if include_ways:
-        parts.append("way[{sel}]({s},{w},{n},{e});".format(sel=sel, s=south, w=west, n=north, e=east))
+        parts.append(
+            "way[{sel}]({s},{w},{n},{e});".format(
+                sel=sel, s=south, w=west, n=north, e=east
+            )
+        )
     if include_relations:
-        parts.append("relation[{sel}]({s},{w},{n},{e});".format(sel=sel, s=south, w=west, n=north, e=east))
+        parts.append(
+            "relation[{sel}]({s},{w},{n},{e});".format(
+                sel=sel, s=south, w=west, n=north, e=east
+            )
+        )
 
     union = "\n  ".join(parts)
     ql = f"""

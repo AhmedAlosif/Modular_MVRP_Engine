@@ -1,14 +1,16 @@
 from __future__ import annotations
-from typing import List, Optional, Union, Any, Tuple
+from typing import List, Optional, Union, Any
 from pydantic import BaseModel, Field, field_validator
 from models.distance_matrix import MatrixResult  # solver consumes a MatrixResult
 from models.fleet import Vehicle, Fleet
 from models.waypoints import Waypoint
 
+
 class PickupDeliveryPair(BaseModel):
-    pickup: int                 # node index in the matrix
-    delivery: int               # node index in the matrix
+    pickup: int  # node index in the matrix
+    delivery: int  # node index in the matrix
     quantity: Optional[int] = None  # optional; demands[] controls load
+
 
 class Route(BaseModel):
     vehicle_id: str
@@ -18,10 +20,12 @@ class Route(BaseModel):
     emissions: Optional[float] = None
     metadata: Optional[dict] = None
 
+
 class Routes(BaseModel):
     status: str = "success"
     message: Optional[str] = None
     routes: List[Route] = Field(default_factory=list)  # avoid shared mutable default
+
 
 class ObjectiveWeights(BaseModel):
     distance: float = 1.0
@@ -29,10 +33,13 @@ class ObjectiveWeights(BaseModel):
     emissions: float = 0.0
     reliability: float = 0.0
 
+
 class SolveRequest(BaseModel):
     # For /solver/solve: the matrix must already be computed
     solver: str
-    matrix: Optional[MatrixResult] = None  # JSON with {distances, durations} parses to MatrixResult
+    matrix: Optional[MatrixResult] = (
+        None  # JSON with {distances, durations} parses to MatrixResult
+    )
     fleet: Union[List[Vehicle], Fleet]
     depot_index: int = 0
 
@@ -76,13 +83,18 @@ class SolveRequest(BaseModel):
             # dict form
             if isinstance(item, dict):
                 if "pickup" in item and "delivery" in item:
-                    rec = {"pickup": int(item["pickup"]), "delivery": int(item["delivery"])}
+                    rec = {
+                        "pickup": int(item["pickup"]),
+                        "delivery": int(item["delivery"]),
+                    }
                     if "quantity" in item and item["quantity"] is not None:
                         rec["quantity"] = int(item["quantity"])
                     out.append(rec)
                     continue
                 if "from" in item and "to" in item:
-                    out.append({"pickup": int(item["from"]), "delivery": int(item["to"])})
+                    out.append(
+                        {"pickup": int(item["from"]), "delivery": int(item["to"])}
+                    )
                     continue
 
             raise ValueError(
